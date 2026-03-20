@@ -1,4 +1,5 @@
-from const_param import *
+import warp as wp
+from const_param import gravity
 from geometry import _sdf_cube
 @wp.kernel
 def integrate_3d(
@@ -36,14 +37,6 @@ def set_phi_3d(
     p -= r_and_center
     phi[i, j, k] = _sdf_cube(p, r_and_center, wp.quat_identity()) - 0.01
 
-@wp.func
-def should_emit(d: float) -> bool:
-    return True
-    d = d * 512.0
-    ret = False
-    if int(wp.rint(d)) % 5 < 3:
-        ret = True
-    return ret
 
 @wp.kernel
 def init_3d(

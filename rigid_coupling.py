@@ -1,4 +1,5 @@
-from const_param import *
+import warp as wp
+from const_param import center_rigid, rotate, init_v0, h0, v_inflow, gridx, gridy, gridz, dt, gravity, config_file, use_scene, xtype, theta_type, omega_type, shape
 from geometry import sdf_argmin_3d, GeometryType3D
 from utils.util import TexPair, compute_v_solid_3d, is_cutcell_3d
 import numpy as np
@@ -468,13 +469,9 @@ class RigidCoupling:
 
 
     def precompute_solid_vel_3d(self, x, theta, v, omega, geometry, u_rigid, v_rigid, w_rigid, u_owner, v_owner, w_owner, l = 0.0, b = 0.0, f = 0.0, h= h0):
-        if dimension == 3:
-            wp.launch(_precompute_solid_vel_u_3d, dim = u_rigid.shape, inputs = [x, v, omega, u_rigid, u_owner, l, b, f, h])
-            wp.launch(_precompute_solid_vel_v_3d, dim = v_rigid.shape, inputs = [x, v, omega, v_rigid, v_owner, l, b, f, h])
-            wp.launch(_precompute_solid_vel_w_3d, dim = w_rigid.shape, inputs = [x, v, omega, w_rigid, w_owner, l, b, f, h])
-        else: 
-            print("error: use 2d precompute solid vel instead")
-            quit()
+        wp.launch(_precompute_solid_vel_u_3d, dim = u_rigid.shape, inputs = [x, v, omega, u_rigid, u_owner, l, b, f, h])
+        wp.launch(_precompute_solid_vel_v_3d, dim = v_rigid.shape, inputs = [x, v, omega, v_rigid, v_owner, l, b, f, h])
+        wp.launch(_precompute_solid_vel_w_3d, dim = w_rigid.shape, inputs = [x, v, omega, w_rigid, w_owner, l, b, f, h])
 
 
     def compute_rigid_phi(self, phi, lbf = np.zeros(3), h = h0, include_static = 1):
@@ -493,7 +490,6 @@ class RigidCoupling:
         self.rigid_step_paired(dt)
 
     def xform_matrices(self):
-        assert dimension == 3
         m = wp.empty(shape = self.v.shape, dtype = wp.mat44)
         wp.launch(get_xform, dim = self.v.shape, inputs = [self.x_pair.cur, self.theta_pair.cur], outputs = [m])
         return m.numpy()

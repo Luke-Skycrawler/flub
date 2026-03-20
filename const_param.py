@@ -2,8 +2,6 @@ import warp as wp
 import numpy as np
 write_video = False
 write_npy = False
-ps_view = False
-ov_view = False
 use_scene = True
 
 
@@ -25,22 +23,22 @@ comm_mode = "overwrite"
 xpbd = True
 view_frames = 800 if not write_npy else 200
 dt = 1e-2
-fmg = True
-time_scale = 0
 
 # parameters for global grid
 # defulat volume (1.0, 0.5, 0.25) 
 use_mgpcg = True
 dimension = 3
 res_digits = 7
-# res = 256
-# gridx = 256
+
+res = 256
+gridx = 256
+gridy = 256
+gridz = 256
+
+# res = 64
+# gridx = 64
 # gridy = 64
-# gridz = 256
-res = 64
-gridx = 64
-gridy = 64
-gridz = 64
+# gridz = 64
 # res = 128
 # gridx = 256
 # gridy = 256
@@ -50,12 +48,6 @@ xtype = wp.vec2
 theta_type = float 
 omega_type = float 
 
-# shape = (gridx, gridy)
-# shapeu = (gridx + 1, gridy)
-# shapev = (gridx, gridy + 1)
-# n_unknowns = gridx * gridy
-
-# if dimension == 3:
 shape = (gridx, gridy, gridz)
 shapeu = (gridx + 1, gridy, gridz)
 shapev = (gridx, gridy + 1, gridz)
@@ -80,8 +72,6 @@ static_objects = False
 
 n_particle_per_cell = wp.constant(8)
 
-if not fmg:
-    time_scale = 0
 fft_blend = False
 v_inflow = 0.0
 n_fine_smoothing = 30

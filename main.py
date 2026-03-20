@@ -84,7 +84,7 @@ if __name__ == "__main__":
     save_nvdb = write_npy
     save_bgeo = write_npy and water
 
-    path = f"./dam break/res{res}" + ("water" if water else "") + (f"fmg_timescale{0}{comm_mode}" if fmg else "ref")
+    path = f"./dam break/res{res}" + ("water" if water else "") + "ref"
     npy_path = path + "npy"
     path += "vdb"
     particle_path = path + "_particle"

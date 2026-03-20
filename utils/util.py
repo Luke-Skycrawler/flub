@@ -10,56 +10,12 @@ class TexPair:
         self.cur, self.nxt = self.nxt, self.cur
 
 @wp.kernel
-def mean(
-    sum: wp.array(dtype = float),
-    qf: wp.array2d(dtype = float)):
-
-    i, j = wp.tid()
-    wp.atomic_add(sum, 0, qf[i, j])
-
-@wp.kernel
 def min_kernel(
     q: wp.array3d(dtype = float),
     q1: wp.array3d(dtype = float)):
     i, j, k = wp.tid()
     q[i, j, k] = wp.min(q[i, j, k], q1[i, j, k])
 
-@wp.kernel
-def subtract_mean(
-    qf: wp.array2d(dtype = float),
-    sum: wp.array(dtype = float)
-):
-    n_avg = float(qf.shape[0] * qf.shape[1])
-    
-    i, j = wp.tid()
-    qf[i, j] = qf[i, j] - sum[0] / n_avg
-    
-
-@wp.kernel
-def divide_if_not_zero(
-    qf: wp.array3d(dtype = float),
-    lam: wp.array3d(dtype = float)
-):
-    i, j, k = wp.tid()
-    if lam[i, j, k] != 0.0:
-        qf[i, j, k] = qf[i, j, k] / lam[i, j, k]
-
-
-# from warp.utils import array_sum
-
-def zero_centered(div):
-    # array_sum()
-    
-    # divnp = div.numpy()
-    # divnp -= np.mean(divnp)
-    # div = wp.from_numpy(divnp, dtype = float, shape = divnp.shape)
-    pass
-
-@wp.func
-def sample_2d(qf: wp.array2d(dtype=float), u: int, v: int):
-    u = wp.clamp(u, 0, gridx - 1)
-    v = wp.clamp(v, 0, gridy - 1)
-    return qf[u, v]
 
 @wp.func 
 def sample_3d(qf: wp.array3d(dtype = float), u: int, v: int, w: int):
@@ -71,60 +27,9 @@ def sample_3d(qf: wp.array3d(dtype = float), u: int, v: int, w: int):
     w = wp.clamp(w, 0, gz - 1)
     return qf[u, v, w]
 
-@wp.func 
-def sample_3di(qf: wp.array3d(dtype = int), u: int, v: int, w: int):
-    gx = qf.shape[0]
-    gy = qf.shape[1]
-    gz = qf.shape[2]
-    u = wp.clamp(u, 0, gx - 1)
-    v = wp.clamp(v, 0, gy - 1)
-    w = wp.clamp(w, 0, gz - 1)
-    return qf[u, v, w]
 
-sample = sample_2d if dimension == 2 else sample_3d
+sample = sample_3d
 
-@wp.func
-def sample_u(uf: wp.array2d(dtype=float), u: int, v: int):
-    u = wp.clamp(u, 0, gridx)
-    v = wp.clamp(v, 0, gridy - 1)
-    return uf[u, v]
-
-
-@wp.func
-def sample_v(vf: wp.array2d(dtype=float), u: int, v: int):
-    u = wp.clamp(u, 0, gridx - 1)
-    v = wp.clamp(v, 0, gridy)
-    return vf[u, v]
-
-
-@wp.func
-def sample_velocity_2d(uf: wp.array2d(dtype=float), vf: wp.array2d(dtype=float), p: wp.vec2):
-    # p is the unbiased position
-    
-    return wp.vec2(bilerpu(uf, p), bilerpv(vf, p))
-    # (u, v) = p[0], p[1]
-    # _iu, _iv = wp.floor(u), wp.floor(v)
-    # fu, fv = u - _iu, v - _iv
-
-    # s, t = u - 0.5, v - 0.5
-    # _iu_shift, _iv_shift = wp.floor(s), wp.floor(t)
-    # fs, ft = s - _iu_shift, t - _iv_shift
-
-    # iu, iv, iu_shift, iv_shift = int(_iu), int(_iv), int(_iu_shift), int(_iv_shift)
-
-    # a = sample_u(uf, iu, iv_shift)
-    # b = sample_u(uf, iu + 1, iv_shift)
-    # c = sample_u(uf, iu, iv_shift + 1)
-    # d = sample_u(uf, iu + 1, iv_shift + 1)
-    # vx = wp.lerp(wp.lerp(a, b, fu), wp.lerp(c, d, fu), ft)
-
-    # a = sample_v(vf, iu_shift, iv)
-    # b = sample_v(vf, iu_shift + 1, iv)
-    # c = sample_v(vf, iu_shift, iv + 1)
-    # d = sample_v(vf, iu_shift + 1, iv + 1)
-    # vy = wp.lerp(wp.lerp(a, b, fs), wp.lerp(c, d, fs), fv)
-
-    # return wp.vec2(vx, vy)
 
 @wp.func
 def sample_velocity_3d(
@@ -181,21 +86,6 @@ def sample_velocity_3d(
 
     vz = wp.lerp(wp.lerp(wp.lerp(a, b, fs), wp.lerp(c, d, fs), ft), wp.lerp(wp.lerp(e, f, fs), wp.lerp(g, h, fs), ft), fw)
     return wp.vec3(vx, vy, vz)
-
-
-
-@wp.func
-def bilerp(qf: wp.array2d(dtype=float), p: wp.vec2):
-    # takes unbiased position
-    (u, v) = (p[0], p[1])
-    s, t = u - 0.5, v - 0.5
-    iu, iv = int(wp.floor(s)), int(wp.floor(t))
-    fu, fv = s - float(iu), t - float(iv)
-    a = sample_2d(qf, iu, iv)
-    b = sample_2d(qf, iu + 1, iv)
-    c = sample_2d(qf, iu, iv + 1)
-    d = sample_2d(qf, iu + 1, iv + 1)
-    return wp.lerp(wp.lerp(a, b, fu), wp.lerp(c, d, fu), fv)
 
 
 @wp.func
@@ -268,63 +158,6 @@ def _tricubic(qf: wp.array3d(dtype =float), s: float, t: float, r: float):
 
     return cubic(q__0, q__1, q__2, q__3, fw)
     
-    
-@wp.func
-def bilerpu(vf: wp.array2d(dtype=float), p: wp.vec2):
-    (u, v) = (p[0], p[1])
-    s, t = u, v - 0.5
-    # floor
-    iu, iv = int(wp.floor(s)), int(wp.floor(t))
-    # fract
-    fu, fv = s - float(iu), t - float(iv)
-    a = sample_u(vf, iu, iv)
-    b = sample_u(vf, iu + 1, iv)
-    c = sample_u(vf, iu, iv + 1)
-    d = sample_u(vf, iu + 1, iv + 1)
-    return wp.lerp(wp.lerp(a, b, fu), wp.lerp(c, d, fu), fv)
-
-@wp.func
-def trilerpu(
-    uf: wp.array3d(dtype=float), 
-    p: wp.vec3):
-    (u, v, w) = (p[0], p[1], p[2])
-    s, t, r = u, v - 0.5, w - 0.5
-    return _trilerp(uf, s, t, r)
-
-@wp.func
-def trilerpv(
-    vf: wp.array3d(dtype=float), 
-    p: wp.vec3):
-    (u, v, w) = (p[0], p[1], p[2])
-    s, t, r = u - 0.5, v, w - 0.5
-    return _trilerp(vf, s, t, r)
-
-@wp.func
-def trilerpw(
-    wf: wp.array3d(dtype=float), 
-    p: wp.vec3):
-    (u, v, w) = (p[0], p[1], p[2])
-    s, t, r = u - 0.5, v - 0.5, w
-    return _trilerp(wf, s, t, r)
-    
-@wp.func
-def bilerpv(vf: wp.array2d(dtype = float), p: wp.vec2):
-    (u, v) = (p[0], p[1])
-    s, t = u - 0.5, v
-    # floor
-    iu, iv = int(wp.floor(s)), int(wp.floor(t))
-    # fract
-    fu, fv = s - float(iu), t - float(iv)
-    a = sample_v(vf, iu, iv)
-    b = sample_v(vf, iu + 1, iv)
-    c = sample_v(vf, iu, iv + 1)
-    d = sample_v(vf, iu + 1, iv + 1)
-    return wp.lerp(wp.lerp(a, b, fu), wp.lerp(c, d, fu), fv)
-
-@wp.kernel
-def scale_by(qf: wp.array2d(dtype=float), scale: float):
-    i, j = wp.tid()
-    qf[i, j] = qf[i, j] * scale
 
 @wp.kernel
 def scale_by_3d(qf: wp.array3d(dtype=float), scale: float):
@@ -395,28 +228,13 @@ def fraction_quad(ya: float, yb: float, yc: float, yd: float, y_center: float):
     return frac
 
 @wp.func
-def compute_v_solid_2d(uv: wp.vec2, x: wp.vec2, v: wp.vec2, omega: float):
-    # takes in unbiased position
-    p = uv - x
-    ret = v + omega * wp.vec2(-p[1], p[0])
-    return ret
-
-@wp.func
 def compute_v_solid_3d(uvw: wp.vec3, x: wp.vec3, v: wp.vec3, omega: wp.vec3):
     p = uvw - x
     ret = v + wp.cross(omega, p)
     return ret
 
-compute_v_solid = compute_v_solid_2d if dimension == 2 else compute_v_solid_3d
+compute_v_solid = compute_v_solid_3d
 
-@wp.func
-def is_cutcell_2d(i: int, j: int, fu: wp.array2d(dtype = float), fv: wp.array2d(dtype = float)):
-    l = sample_u(fu, i, j)
-    r = sample_u(fu, i + 1, j)
-    b = sample_v(fv, i, j)
-    t = sample_v(fv, i, j + 1)
-    ret = l + r + b + t < 4.0
-    return ret
 
 @wp.func
 def is_cutcell_3d(
@@ -432,42 +250,6 @@ def is_cutcell_3d(
     n = fw[ i, j, k + 1]
     ret = l + r + b + t + f + n < 6.0
     return ret
-
-
-# @wp.kernel    
-# def set_boundary_fufv(
-#     fu: wp.array3d(dtype = float), 
-#     fv: wp.array3d(dtype = float), 
-#     fw: wp.array3d(dtype = float),
-#     val: float, 
-#     l: float, b: float, f: float, h: float):
-#     i, j = wp.tid()
-
-#     gridx = fu.shape[0] - 1
-#     gridy = fv.shape[1] - 1
-#     gridz = fw.shape[2] - 1
-
-#     if l < 0.01 * h0 and i < gridy and j < gridz:
-#         fu[0, i, j] = val 
-#     if l + float(gridx) * h > 1.0 - 0.01 * h0:
-#         fu[gridx, i, j] = val
-
-
-#     if b < 0.01 * h0 and i < gridx and j < gridz:
-#         fv[i, 0, j] = val
-#     if b + float(gridy) * h > 1.0 - 0.01 * h0:
-#         fv[i, gridy, j] = val
-    
-#     if f < 0.01 * h0 and i < gridx and j < gridy:
-#         fw[i, j, 0] = val
-#     if f + float(gridz) * h > 1.0 - 0.01 * h0:
-#         fw[i, j, gridz] = val
-
-#     # fixme: upper bounday no longer 1.0
-#     # buggy, use the one in geometry_derived
-
-
-
 
 @wp.kernel
 def divide(u1: wp.array3d(dtype = float), u2: wp.array3d(dtype = float)):
@@ -497,32 +279,6 @@ def valid_vface(iu: int, iv: int, iw: int):
 def valid_wface(iu: int, iv: int, iw: int):
     return 0 <= iu and iu < res and 0 <= iv and iv < res and 0 <= iw and iw <= res
 
-
-@wp.func
-def inv_bilerpu(uf: wp.array2d(dtype = float), p: wp.vec2, q: float):
-    u, v = p[0], p[1]
-    s, t = u, v - 0.5
-    # floor
-    iu, iv = int(wp.floor(s)), int(wp.floor(t))
-    # fract
-    fu, fv = s - wp.floor(s), t - wp.floor(t)
-
-    a_area = (1.0 - fu) * (1.0 - fv)
-    b_area = fu * (1.0 - fv)
-    c_area = (1.0 - fu) * fv
-    d_area = fu * fv
-    
-    if valid_uface(iu, iv):
-        wp.atomic_add(uf, iu, iv, a_area * q)
-    if valid_uface(iu + 1, iv):
-        wp.atomic_add(uf, iu + 1, iv, b_area * q)
-        # uf[iu + 1, iv] += b_area * q
-    if valid_uface(iu, iv + 1):
-        wp.atomic_add(uf, iu, iv + 1, c_area * q)
-        # uf[iu, iv + 1] += c_area * q
-    if valid_uface(iu + 1, iv + 1):
-        wp.atomic_add(uf, iu + 1, iv + 1, d_area * q)
-        # uf[iu + 1, iv + 1] += d_area * q
 
 @wp.func
 def inv_bilerpu(uf: wp.array3d(dtype = float), p: wp.vec3, q: float):
@@ -560,32 +316,6 @@ def inv_bilerpu(uf: wp.array3d(dtype = float), p: wp.vec3, q: float):
         wp.atomic_add(uf, iu, iv + 1, iw + 1, g_area * q)
     if valid_uface(iu + 1, iv + 1, iw + 1):
         wp.atomic_add(uf, iu + 1, iv + 1, iw + 1, h_area * q)
-
-@wp.func
-def inv_bilerpv(vf: wp.array2d(dtype = float), p: wp.vec2, q: float):
-    u, v = p[0], p[1]
-    s, t = u - 0.5, v
-    # floor
-    iu, iv = int(wp.floor(s)), int(wp.floor(t))
-    # fract
-    fu, fv = s - wp.floor(s), t - wp.floor(t)
-
-    a_area = (1.0 - fu) * (1.0 - fv)
-    b_area = fu * (1.0 - fv)
-    c_area = (1.0 - fu) * fv
-    d_area = fu * fv
-    
-    if valid_vface(iu, iv):
-        wp.atomic_add(vf, iu, iv, a_area * q)
-    if valid_vface(iu + 1, iv):
-        wp.atomic_add(vf, iu + 1, iv, b_area * q)
-        # vf[iu + 1, iv] += b_area * q
-    if valid_vface(iu, iv + 1):
-        wp.atomic_add(vf, iu, iv + 1, c_area * q)
-        # vf[iu, iv + 1] += c_area * q
-    if valid_vface(iu + 1, iv + 1):
-        wp.atomic_add(vf, iu + 1, iv + 1, d_area * q)
-        # vf[iu + 1, iv + 1] += d_area * q
 
 @wp.func
 def inv_bilerpv(vf: wp.array3d(dtype = float), p: wp.vec3, q: float):
@@ -663,16 +393,8 @@ def inv_bilerpw(wf: wp.array3d(dtype = float), p: wp.vec3, q: float):
 
 
 @wp.func
-def center_in_fluid(phi: wp.array2d(dtype = float), i: int, j: int) -> bool:
-    return 0 <= i and i < phi.shape[0] and 0 <= j and j < phi.shape[1] and phi[i, j] < 0.0 
-
-@wp.func
 def center_in_fluid_3d(phi: wp.array3d(dtype = float), i: int, j: int, k: int) -> bool:
     return 0 <= i and i < phi.shape[0] and 0 <= j and j < phi.shape[1] and 0 <= k and k < phi.shape[2] and phi[i, j, k] < 0.0 
-
-@wp.func
-def is_interior_cell(tag: wp.array2d(dtype = int), i: int, j: int):
-    return 0 <= i and i < tag.shape[0] and 0 <= j and j < tag.shape[1] and tag[i, j] != 0
 
 @wp.func
 def is_interior_cell_3d(tag: wp.array3d(dtype = int), i: int, j: int, k: int):
@@ -688,65 +410,6 @@ def fraction_of_fluid(phi1: float, phi2: float):
     else:
         ret = 1.0 - wp.max(phi1, phi2) / wp.abs(phi1 - phi2)
     return ret
-
-
-@wp.kernel
-def integrate(u: wp.array2d(dtype=wp.vec2), rho: wp.array2d(dtype=float), dt: float):
-    i, j = wp.tid()
-
-    # gravity
-    f_g = wp.vec2(-0.98, 0.0) * rho[i, j]
-
-    # integrate
-    u[i, j] = u[i, j] + dt * f_g
-
-    # fade
-    rho[i, j] = rho[i, j] * (1.0 - 0.1 * dt)
-
-@wp.kernel
-def integrate_staggered(u: wp.array2d(dtype=float), v: wp.array2d(dtype = float), rho: wp.array2d(dtype=float), dt: float):
-    i, j = wp.tid()
-
-    # gravity
-    # f_g = wp.vec2(0.98, 0.0)# * rho[i, j]
-    f_g = wp.vec2(0.0, -0.98) * 10.0 #* rho[i, j]
-    # f_g = wp.vec2(0.0, 0.0) * rho[i, j]
-
-    # integrate
-    u[i, j] = u[i, j] + dt * f_g[0]
-    v[i, j] = v[i, j] + dt * f_g[1]
-
-    if i == gridx - 1:
-        u[gridx - 1, j] = u[gridx - 1, j] + dt * f_g[0]
-    if j == gridy - 1:
-        v[i, gridy - 1] = v[i, gridy - 1] + dt * f_g[1]
-
-    # fade
-    # rho[i, j] = rho[i, j] * (1.0 - 0.1 * dt)
-    rho[i, j] = rho[i, j] * (1.0 - dt)
-
-
-
-@wp.kernel
-def init(rho: wp.array2d(dtype=float), u: wp.array2d(dtype=wp.vec2), radius: int, dir: wp.vec2):
-    i, j = wp.tid()
-
-    d = wp.length(wp.vec2(float(i - gridx / 2), float(j - gridy / 2)))
-
-    if d < radius:
-        rho[i, j] = 1.0
-        u[i, j] = dir
-
-@wp.kernel
-def init_staggered(rho: wp.array2d(dtype=float), u: wp.array2d(dtype=float), v: wp.array2d(dtype = float), radius: float, dir: wp.vec2):
-    i, j = wp.tid()
-
-    d = wp.length(wp.vec2(float(i - gridx / 4), float(j - gridy / 2))) * h0
-
-    if d < radius:
-        rho[i, j] = 1.0
-        u[i, j] = dir[0]
-        v[i, j] = dir[1]
 
 @wp.kernel
 def process_tag(

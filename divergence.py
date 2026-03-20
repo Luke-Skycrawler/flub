@@ -1,5 +1,5 @@
-from const_param import *
-from utils.util import sample_u, sample_v, sample, sample_3d
+import warp as wp
+from utils.util import sample_3d
 @wp.kernel
 def divergence_fractional_3d(
     uf: wp.array3d(dtype = float), 
