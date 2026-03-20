@@ -1,18 +1,25 @@
-from const_param import *
-from utils.util import backtrace, bilerp, bilerpu, bilerpv, trilerp, trilerpu, trilerpv, trilerpw, in_bound, sample_3d, trilerp_stagger
+from const_param import dt, h0
+import warp as wp
+from utils.util import sample_velocity_3d, sample_3d, trilerp_stagger, trilerp
 
-@wp.kernel
-def advect_simple(
-    uf: wp.array2d(dtype=float),
-    vf: wp.array2d(dtype=float),
-    qf: wp.array2d(dtype=float),
-    new_qf: wp.array2d(dtype=float),
-    dt: float, h: float
-):
-    i, j = wp.tid()
-    p = wp.vec2(float(i) + 0.5, float(j) + 0.5)
-    p = backtrace(uf, vf, p, dt, h)
-    new_qf[i, j] = bilerp(qf, p)
+@wp.func
+def in_bound(p: float, res: int):
+    return 0.0 <= p and p < float(res)
+
+
+@wp.func
+def backtrace(
+    uf: wp.array3d(dtype=float), 
+    vf: wp.array3d(dtype=float), 
+    wf: wp.array3d(dtype=float),
+    p: wp.vec3, dt: float, h: float):
+    v1 = sample_velocity_3d(uf, vf, wf, p)
+    p1 = p - 0.5 * dt / h * v1
+    v2 = sample_velocity_3d(uf, vf, wf, p1)
+    p2 = p - 0.75 * dt / h * v2
+    v3 = sample_velocity_3d(uf, vf, wf, p2)
+    p -= dt / h * ((2.0 / 9.0) * v1 + (1.0 / 3.0) * v2 + (4.0 / 9.0) * v3)
+    return p
 
 @wp.kernel
 def advect_simple_3d(
@@ -47,124 +54,14 @@ def advect_phi(
     gy = phi.shape[1]
     gz = phi.shape[2]
     if in_bound(p[0], gx) and in_bound(p[1], gy) and in_bound(p[2], gz):
-        # new_phi[i, j, k] = trilerp(phi, p)
         new_phi[i, j, k] = trilerp_stagger(phi, p, stagger)
-        # phi_ijk = trilerp(phi, p)
-        # new_phi[i, j, k] = wp.select(phi_ijk > 0.0, - h0, h0)
     else: 
         new_phi[i, j, k] = h0
 
-@wp.kernel
-def advect_u(
-    uf: wp.array2d(dtype=float),
-    vf: wp.array2d(dtype=float),
-    new_uf: wp.array2d(dtype=float),
-    dt: float, h: float
-):
-    i, j = wp.tid()
-    p = wp.vec2(float(i), float(j) + 0.5)
-    p = backtrace(uf, vf, p, dt, h)
-    if 0 < i < gridx:
-        new_uf[i, j] = bilerpu(uf, p)
-    else :
-        new_uf[i, j] = 0.0
-        
-@wp.kernel
-def advect_u_3d(
-    uf: wp.array3d(dtype=float),
-    vf: wp.array3d(dtype=float),
-    wf: wp.array3d(dtype=float),
-    new_uf: wp.array3d(dtype=float),
-    dt: float, h: float
-):
-    i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j) + 0.5, float(k) + 0.5)
-    p = backtrace(uf, vf, wf, p, dt, h)
-    # if 0 < i and i < uf.shape[0] - 1:
-    if True:
-        new_uf[i, j, k] = trilerpu(uf, p)
 
-    # FIXME: make it verseraltile for patch and global 
-    elif h == h0 :
-        new_uf[i, j, k] = 0.0
-
-@wp.kernel
-def advect_v(
-    uf: wp.array2d(dtype=float),
-    vf: wp.array2d(dtype=float),
-    new_vf: wp.array2d(dtype=float),
-    dt: float, h: float
-):
-    i, j = wp.tid()
-    p = wp.vec2(float(i) + 0.5, float(j))
-    p = backtrace(uf, vf, p, dt, h)
-    if 0 < j < gridy:
-        new_vf[i, j] = bilerpv(vf, p)
-    else:
-        new_vf[i, j] = 0.0
-
-@wp.kernel
-def advect_v_3d(
-    uf: wp.array3d(dtype=float),
-    vf: wp.array3d(dtype=float),
-    wf: wp.array3d(dtype=float),
-    new_vf: wp.array3d(dtype=float),
-    dt: float, h: float
-):
-    i, j, k = wp.tid()
-    p = wp.vec3(float(i) + 0.5, float(j), float(k) + 0.5)
-    p = backtrace(uf, vf, wf, p, dt, h)
-    # if 0 < j and j < vf.shape[1] - 1:
-    if True:
-        new_vf[i, j, k] = trilerpv(vf, p)
-    elif h == h0:
-        new_vf[i, j, k] = 0.0
-
-@wp.kernel
-def advect_w_3d(
-    uf: wp.array3d(dtype=float),
-    vf: wp.array3d(dtype=float),
-    wf: wp.array3d(dtype=float),
-    new_wf: wp.array3d(dtype=float),
-    dt: float, h: float
-):
-    i, j, k = wp.tid()
-    p = wp.vec3(float(i) + 0.5, float(j) + 0.5, float(k))
-    p = backtrace(uf, vf, wf, p, dt, h)
-    # if 0 < k and k < wf.shape[2] - 1:
-    if True:
-        new_wf[i, j, k] = trilerpw(wf, p)
-    elif h == h0:
-        new_wf[i, j, k] = 0.0
-
-
-def advect_staggered(uf, vf, qf, new_uf, new_vf, new_qf, h = h0):
-
-    wp.launch(advect_simple, dim = shape, inputs = [uf, vf, qf, new_qf, dt, h])
-    wp.launch(advect_u, dim = shapeu, inputs = [uf, vf, new_uf, dt, h])
-    wp.launch(advect_v, dim = shapev, inputs = [uf, vf, new_vf, dt, h])
-
-def advect_3d(uf, vf, wf, qf, new_uf, new_vf, new_wf, new_qf, h = h0):
-    wp.launch(set_boundary_u, dim = (shapeu[1], shapeu[2]), inputs = [uf, v_inflow])
-
-    # wp.launch(advect_simple_3d, dim = shape, inputs = [uf, vf, wf, qf, new_qf, dt, h])
-    # wp.launch(advect_u_3d, dim = shapeu, inputs = [uf, vf, wf, new_uf, dt, h])
-    # wp.launch(advect_v_3d, dim = shapev, inputs = [uf, vf, wf, new_vf, dt, h])
-    # wp.launch(advect_w_3d, dim = shapew, inputs = [uf, vf, wf, new_wf, dt, h])
-    
+def advect_3d(uf, vf, wf, qf, new_uf, new_vf, new_wf, new_qf, h = h0):    
     advect_mc(qf, new_qf, uf, vf, wf, dt, h)
     advect_uv_mc(uf, vf, wf, new_uf, new_vf, new_wf, dt, h)
-
-
-
-    
-@wp.kernel
-def set_boundary_u(uf: wp.array3d(dtype=float), u_boundary: float):
-    i, j = wp.tid()
-    gx = uf.shape[0] - 1
-    uf[0, i, j] = u_boundary
-    uf[gx, i, j] = u_boundary
-    
 
 @wp.kernel
 def _advect_mc_1(

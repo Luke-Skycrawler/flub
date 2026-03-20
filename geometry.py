@@ -1,13 +1,8 @@
 from const_param import *
 import numpy as np
-from utils.mesh import Mesh
-# from .utils.util import *
+from utils.util import fraction_quad, trilerp_stagger
+
 MAX_DIST = wp.constant(1e10)
-@wp.struct
-class GeometryType2D:
-    geometry: int
-    radius: wp.vec2
-    rho: float
 
 @wp.struct
 class GeometryType3D:
@@ -54,37 +49,6 @@ def _sdf_cube(
     return ret
 
 sdf_cube = _sdf_cube
-# shape: 0: none, 1: quad, 2: circle, 3: rect, 4: x
-@wp.func
-def compute_sdf_atom(
-    u: float, v: float, 
-    x: wp.array1d(dtype=wp.vec2), 
-    _theta: wp.array1d(dtype=float), 
-    _geometry: wp.array1d(dtype=GeometryType2D), 
-    rigid_id: int
-) -> float:
-    '''u, v in [0, 1]'''
-    ret = 0.0
-    p = wp.vec2(u, v) - x[rigid_id]
-    radius = _geometry[rigid_id].radius
-    geometry = _geometry[rigid_id].geometry
-    theta = _theta[rigid_id]
-    if geometry == 0:
-        '''none'''
-        ret = 1.0
-    elif geometry == 1 or geometry == 3:
-        '''quad / rect'''
-        ret = _sdf_rect(p, radius, theta)
-
-    elif geometry == 2:
-        '''circle'''
-        ret = wp.length(p) - radius[0]
-    elif geometry == 4:
-        '''x'''
-        ret = wp.min(_sdf_rect(p, radius, theta), _sdf_rect(p, radius, theta + _pi2))
-        # ret = 1.0
-    return ret
-
 # shape: 0: none, 1: quad, 2: circle, 3: rect, 4: x
 @wp.func
 def compute_sdf_atom(
@@ -165,24 +129,6 @@ def compute_sdf_atom_prims(
         ret = 2.0
     return ret
 
-@wp.func
-def sdf_argmin(
-    u: float, 
-    v: float, 
-    x: wp.array1d(dtype=wp.vec2), 
-    _theta: wp.array1d(dtype=float), 
-    geometry: wp.array1d(dtype=GeometryType2D)
-):
-    interior = float(2.0)
-    argmin = int(-1)
-    n_rigids = x.shape[0]
-    for ii in range(n_rigids):
-        sdf = compute_sdf_atom(u, v, x, _theta, geometry, ii)
-        if sdf < wp.min(h0, interior):
-            interior = sdf
-            argmin = ii
-    
-    return (interior, argmin)
 
 @wp.func
 def sdf_argmin_3d(
@@ -240,236 +186,308 @@ def sdf_argmin_prims(
     return (interior, argmin)
 
 
-@wp.func 
-def dis_to_ab(
-    a: wp.vec2, b: wp.vec2, p: wp.vec2):
-    '''computes distance from p to nearest point on line segment ab'''
-    ap = p - a
-    ab = b - a
-    t = wp.dot(ap, ab) / wp.length_sq(ab)
-    t = wp.min(wp.max(t, 0.0), 1.0)
-    ret = wp.length(ap - t * ab)
-    return ret
-
-@wp.func 
-def dis_to_ab(
-    a: wp.vec3, b: wp.vec3, p: wp.vec3):
-    '''computes distance from p to nearest point on line segment ab'''
-    ap = p - a
-    ab = b - a
-    t = wp.dot(ap, ab) / wp.length_sq(ab)
-    t = wp.clamp(t, 0.0, 1.0)
-    ret = wp.length(ap - t * ab)
-    return ret
-
-@wp.func
-def project(p: wp.vec3, d: wp.vec3):
-    '''return a vec3, the projection of p onto d'''
-    d = wp.normalize(d)
-    return wp.dot(p, d) * d
-
-@wp.func
-def inside_triangle(
-    a: wp.vec3, b: wp.vec3, c: wp.vec3, p_project: wp.vec3):
-    normal = wp.cross(b - a, c - a)
-    area1 = wp.dot(normal, wp.cross(p_project - a, p_project - b))
-    area2 = wp.dot(normal, wp.cross(p_project - b, p_project - c))
-    area3 = wp.dot(normal, wp.cross(p_project - c, p_project - a))
-
-    if area1 * area2 >= 0.0 and area2 * area3 >= 0.0:
-        return True
-
-    return False
-@wp.func 
-def dis_to_abc(
-    a: wp.vec3, b: wp.vec3, c: wp.vec3, p: wp.vec3):
-    '''computes distance from p to nearest point on triangle abc'''
-    ab = b - a
-    ac = c - a
-    pa = a - p
-    normal = wp.cross(ab, ac)
-    height_offplane = wp.dot(pa, wp.normalize(normal))
-    
-    dab = dis_to_ab(a, b, p)
-    dac = dis_to_ab(a, c, p)
-    dbc = dis_to_ab(b, c, p)
-    
-    p_project = pa - project(pa, normal)
-    projection_inside = inside_triangle(a, b, c, p_project)
-
-
-    if projection_inside:
-        return height_offplane
-    
-    return wp.min(wp.min(dab, dac), dbc)
-
-@wp.func
-def v_transformed(
-    pid: wp.int32, 
-    vertices: wp.array1d(dtype = wp.vec2), 
-    x: wp.vec2, theta: float
-):
-    _c = wp.cos(theta)
-    _s = wp.sin(theta)
-    p0 = vertices[pid]
-    p0 = x + wp.vec2(p0[0] * _c - p0[1] * _s, p0[0] * _s + p0[1] * _c)
-    return p0
-
-@wp.func
-def v_transformed(
-    pid: wp.int32, 
-    vertices: wp.array1d(dtype = wp.vec3), 
-    x: wp.vec3, q: wp.quat
-):
-    p0 = vertices[pid]
-    p0 = x + wp.quat_rotate(q, p0)
-    return p0
-
-@wp.func
-def inside_polygon(
-    sihoutte: wp.array1d(dtype = wp.vec2i), 
-    vertices: wp.array1d(dtype = wp.vec2), 
-    x: wp.vec2, theta: float,
-    p: wp.vec2) -> wp.bool:
-    '''decide whether p is inside polygon, only works when the polygon is convex'''
-    ne = sihoutte.shape[0]
-    sgn = 0
-    ret = wp.bool(True)
-    for i in range(ne):
-        p0 = v_transformed(sihoutte[i][0], vertices, x, theta)
-        p1 = v_transformed(sihoutte[i][1], vertices, x, theta)
-
-        if (p0[1] > p[1]) != (p1[1] > p[1]) and (p[0] < (p1[0] - p0[0]) * (p[1] - p0[1]) / (p1[1] - p0[1]) + p0[0]):
-            ret = wp.unot(ret)
-    return ret
-
-@wp.func
-def inside_closed_mesh(
-    indices: wp.array1d(dtype = wp.vec3i), 
-    vertices: wp.array1d(dtype = wp.vec3), 
-    x: wp.vec3, q: wp.quat,
-    p: wp.vec3) -> wp.bool:
-    '''decide whether p is inside polygon, only works when the polygon is convex'''
-    ne = indices.shape[0]
-	# Accumulate generalized winding number per triangle
-    winding_number = float(0.0)
-    for i in range(ne):
-        p0 = v_transformed(indices[i][0], vertices, x, q) - p
-        p1 = v_transformed(indices[i][1], vertices, x, q) - p
-        p2 = v_transformed(indices[i][2], vertices, x, q) - p
-        
-        p0_norm = wp.length(p0)
-        p1_norm = wp.length(p1)
-        p2_norm = wp.length(p2)
-        
-        winding_number += wp.atan2(wp.determinant(wp.mat33(p0, p1, p2)), p0_norm * p1_norm * p2_norm + p2_norm * wp.dot(p0, p1) + p0_norm * wp.dot(p1, p2) + p1_norm * wp.dot(p2, p0))
-
-    return winding_number >= 4.0 * _pi2
-
-@wp.func
-def to01(i: wp.int32, j: wp.int32, x_offset: float, y_offset: float, h: float):
-    return (float(i) * h + x_offset, float(j) * h + y_offset)
-
 @wp.func
 def to01(
     i: int, j: int, k: int, 
     x_offset: float, y_offset: float, z_offset: float,
     h: float):
     return float(i) * h + x_offset, float(j) * h + y_offset, float(k) * h + z_offset
-    # return (float(i) + x_offset) * h, (float(j) + y_offset) * h, (float(k) + z_offset) * h
 
-@wp.func
-def signed_dis_to_mesh(
-    sihoutte: wp.array1d(dtype = wp.vec2i), 
-    vertices: wp.array1d(dtype = wp.vec2), 
-    p: wp.vec2, 
-    x: wp.vec2, theta: float) -> float:
-    '''sihoutte: (ne, 2), vertices(nv, 2), returns signed distance from p to the mesh'''
+
+@wp.kernel
+def _set_fij_boundary_3d(
+    fuf: wp.array3d(dtype = float), fvf: wp.array3d(dtype = float), fwf: wp.array3d(dtype = float),
+    value: float, x_offset: float, y_offset: float, z_offset: float, h: float
+):
+    gx = fvf.shape[0]
+    gy = fuf.shape[1]
+    gz = fuf.shape[2]
+    if x_offset == 0.0:
+        for i in range(fuf.shape[1]):
+            for j in range(fuf.shape[2]):
+                fuf[0, i, j] = value
+    if x_offset + h * (float(gridx) + 0.01) >= 1.0:
+        for i in range(fuf.shape[1]):
+            for j in range(fuf.shape[2]):
+                fuf[gx, i, j] = value
+    if y_offset == 0.0:
+        for i in range(fvf.shape[0]):
+            for j in range(fvf.shape[2]):
+                fvf[i, 0, j] = value
+    if y_offset + h * (float(gridy) + 0.01) >= float(gridy) * h0:
+        for i in range(fvf.shape[0]):
+            for j in range(fvf.shape[2]):
+                fvf[i, gy, j] = value
+    if z_offset == 0.0:
+        for i in range(fwf.shape[0]):
+            for j in range(fwf.shape[1]):
+                fwf[i, j, 0] = value
+    if z_offset + h * (float(gridz) + 0.01) >= float(gridz) * h0:
+        for i in range(fwf.shape[0]):
+            for j in range(fwf.shape[1]):
+                fwf[i, j, gz] = value
+
+
+@wp.kernel
+def precompute_grid_point_phi(
+    phi: wp.array3d(dtype = float),
+    x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
+    geometry: wp.array1d(dtype = GeometryType3D), 
+    x_offset: float, y_offset: float, z_offset: float, h: float, include_static: int
+):
+    i, j, k = wp.tid()
+    u, v, w = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    y, tag = sdf_argmin_3d(u, v, w, x, q, geometry, include_static)
+    phi[i, j, k] = y
+
+@wp.kernel
+def precompute_grid_point_phi_prims(
+    phi: wp.array3d(dtype = float), owner: wp.array3d(dtype = int),
+    x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
+    geometry: wp.array1d(dtype = GeometryType3D), 
+    x_offset: float, y_offset: float, z_offset: float, h: float,
+    stagger: wp.vec3
+):
+    i, j, k = wp.tid()
+    u, v, w = to01(i, j, k, x_offset, y_offset, z_offset, h) 
+    u += stagger[0] * h
+    v += stagger[1] * h
+    w += stagger[2] * h
+    y, tag = sdf_argmin_prims(u, v, w, x, q, geometry)
+    phi[i, j, k] = y
+    if stagger[0] != 0.0 or stagger[1] != 0.0 or stagger[2] != 0.0:
+        owner[i, j, k] = tag
+
+@wp.kernel
+def _precompute_fij_u_3d_cached(
+    phi: wp.array3d(dtype = float),
+    fuf: wp.array3d(dtype = float),
+    x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
+    geometry: wp.array1d(dtype = GeometryType3D), 
+    owneru: wp.array3d(dtype = int), 
+    x_offset: float, y_offset: float, z_offset: float, h: float, include_static: int
+):
+    '''3d face fraction kernel for u component'''
+    # compute the weights on all edges
+    i, j, k = wp.tid()
+
+    ya = phi[i, j, k]
+    yb = phi[i, j + 1, k]
+    yc = phi[i, j + 1, k + 1]
+    yd = phi[i, j, k + 1]
+
+    (ua, va, wa) = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    (y_center, tag_center) = sdf_argmin_3d(ua, va + 0.5 * h, wa + 0.5 * h, x, q, geometry, include_static)
+    fuf[i, j, k] = fraction_quad(ya, yb, yc, yd, y_center)
+    owneru[i, j, k] = tag_center
+
+@wp.kernel
+def phi_to_fraction(
+    phi: wp.array3d(dtype = float),
+    fuf: wp.array3d(dtype = float),
+    dim: int
+):
+    '''3d face fraction kernel for u component'''
+    # compute the weights on all edges
+    i, j, k = wp.tid()
     
-    ne = sihoutte.shape[0]
-    ret = MAX_DIST
+    ya = phi[i, j, k]
+    yb = phi[i, j + 1, k]
+    yc = phi[i, j + 1, k + 1]
+    yd = phi[i, j, k + 1]
 
-    inside = inside_polygon(sihoutte, vertices, x, theta, p)
-    sgn = wp.select(inside, -1.0, 1.0)
+    if dim == 1: 
+        yb = phi[i + 1, j, k]
+        yc = phi[i + 1, j, k + 1]
+        yd = phi[i, j, k + 1]
+    elif dim == 2:
+        yb = phi[i + 1, j, k]
+        yc = phi[i + 1, j + 1, k]
+        yd = phi[i, j + 1, k]
+
+
+    y_center = fuf[i, j, k]
+    fuf[i, j, k] = fraction_quad(ya, yb, yc, yd, y_center)
+
+@wp.kernel
+def _precompute_fij_v_3d_cached(
+    phi: wp.array3d(dtype = float),
+    fvf: wp.array3d(dtype = float), 
+    x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
+    geometry: wp.array1d(dtype = GeometryType3D), 
+    ownerv: wp.array3d(dtype = int), 
+    x_offset: float, y_offset: float, z_offset: float, h: float, include_static: int
+):
+    '''3d face fraction kernel for v component'''
+    i, j, k = wp.tid()
+    (ua, va, wa) = to01(i, j, k, x_offset, y_offset, z_offset, h)
+
+    ya = phi[i, j, k]
+    yb = phi[i + 1, j, k]
+    yc = phi[i + 1, j, k + 1]
+    yd = phi[i, j, k + 1]
+    (y_center, tag_center) = sdf_argmin_3d(ua + 0.5 * h, va, wa + 0.5 * h, x, q, geometry, include_static)
+    fvf[i, j, k] = fraction_quad(ya, yb, yc, yd, y_center)
+    ownerv[i, j, k] = tag_center
+
+
+@wp.kernel
+def _precompute_fij_w_3d_cached(
+    phi: wp.array3d(dtype = float),
+    fwf: wp.array3d(dtype = float),
+    x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
+    geometry: wp.array1d(dtype = GeometryType3D), 
+    ownerw: wp.array3d(dtype = int),
+    x_offset: float, y_offset: float, z_offset: float, h: float, include_static: int
+):
+    '''3d face fraction kernel for w component'''
+    i, j, k = wp.tid()
+    (ua, va, wa) = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    ya = phi[i, j, k]
+    yb = phi[i + 1, j, k]
+    yc = phi[i + 1, j + 1, k]
+    yd = phi[i, j + 1, k]
+
+    (y_center, tag_center) = sdf_argmin_3d(ua + 0.5 * h, va + 0.5 * h, wa, x, q, geometry, include_static)
+    fwf[i, j, k] = fraction_quad(ya, yb, yc, yd, y_center)
+    ownerw[i, j, k] = tag_center
+
+@wp.kernel
+def _tag_dirichlet(
+    tag: wp.array3d(dtype = int),
+    phi: wp.array3d(dtype = float)
+):
+    i, j, k = wp.tid()
+    if phi[i, j, k] > 0.0:
+        tag[i, j, k] = 0
+    else:
+        tag[i, j, k] = 1
+
+
+@wp.kernel
+def _precompute_tag(
+    tag: wp.array3d(dtype = int),
+    x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
+    geometry: wp.array1d(dtype = GeometryType3D),
+    include_static: int,
+    l: float, b: float, f: float, h: float
+):
+    i, j, k = wp.tid()
+    u, v, w = to01(i, j, k, l, b, f, h)
+    u += 0.5 * h
+    v += 0.5 * h
+    w += 0.5 * h
+    
+    (y_center, tag_center) = sdf_argmin_3d(u, v, w, x, q, geometry, include_static)
+    if y_center < 0.0:
+        tag[i, j, k] = 2
+    
+@wp.kernel
+def update_argmin(
+    phi: wp.array3d(dtype = float),
+    owner: wp.array3d(dtype = int),
+    levelset: wp.array3d(dtype = float),
+    id: int, x: wp.vec3, q: wp.quat,
+    x_offset: float, y_offset: float, z_offset: float, h: float, h_levelset: float,
+    stagger: wp.vec3,
+    ijk: wp.vec3
+):
+    '''update phi with resampled levelset'''
+    i, j, k = wp.tid()
+    px, py, pz = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    p = wp.vec3(px, py, pz) + stagger * h
+
+
+    p = wp.quat_rotate_inv(q, p - x) 
+    p = p / h_levelset - ijk
+    mesh_phi = trilerp_stagger(levelset, p, wp.vec3(0.0, 0.0, 0.0))
+    if mesh_phi < phi[i, j, k]:
+        phi[i, j, k] = mesh_phi
+        if stagger[0] != 0.0 or stagger[1] != 0.0 or stagger[2] != 0.0:
+            owner[i, j, k] = id
+    
+
+@wp.kernel
+def _tag_neumann(
+    tag: wp.array3d(dtype = int),
+    phi: wp.array3d(dtype = float)
+):
+    i, j, k = wp.tid()
+    if phi[i, j, k] < 0.0:
+        tag[i, j, k] = 2
+
+
+
+class PrecomputeFaceFraction:
+    def __init__(self, use_mesh = False, vertices = [], edges = []):
+        self.vertices = np.array(vertices, dtype = np.float32)
+        self.edges = np.array(edges, dtype = int)
+        self.use_mesh = use_mesh
+    
+    def tag_dirichlet(self, tag, phi):
+        wp.launch(_tag_dirichlet, dim = phi.shape, inputs = [tag, phi])
+
+    def tag_neumann(self, tag, phi):
+        wp.launch(_tag_neumann, dim = phi.shape, inputs = [tag, phi])
+    def precompute_tag(self, tag, x, theta, geometry, include_static = 1, lbf = np.zeros(3, np.float32), h = h0):
+        wp.launch(_precompute_tag, dim = tag.shape, inputs = [tag, x, theta, geometry, include_static, lbf[0], lbf[1], lbf[2], h])
+
+    
+    def precompute_phi_with_cached_levelset(self, phi, rc, x_offset, y_offset, z_offset, h, owner = None, stagger = wp.vec3(0.0, 0.0, 0.0)):        
+        if owner is None:
+            owner = wp.zeros((1, 1, 1), dtype = int)
+
+        # handle simple geometry first (boxes, spheres, etc.)
+        wp.launch(precompute_grid_point_phi_prims, dim = phi.shape, inputs = [phi, owner, rc.x_pair.cur, rc.theta_pair.cur, rc.rigid_geometry, x_offset, y_offset, z_offset, h, stagger])
+        # handle mesh
+        xnp = rc.x_pair.cur.numpy()
+        qnp = rc.theta_pair.cur.numpy()
+
+        for i, lijk in rc.cached_levelset.items():
+            levelset, ijk, h_levelset = lijk
+            _x = xnp[i]
+            _q = qnp[i]
+            x = wp.vec3(_x[0], _x[1], _x[2]) 
+            q = wp.quat(_q[0], _q[1], _q[2], _q[3])
+            wp.launch(update_argmin, dim = phi.shape, inputs = [phi, owner, levelset, i, x, q, x_offset, y_offset, z_offset, h, h_levelset, stagger, ijk])
+    
+    def precompute_fij_with_cache(self, fuf, fvf, fwf, owneru, ownerv, ownerw, rc, x_offset = 0.0, y_offset = 0.0, z_offset = 0.0, h = h0): 
+        ext_shape = (fuf.shape[0], fvf.shape[1], fwf.shape[2])
+        phi_tmp = wp.empty(ext_shape, dtype = float)
+
+
+        staggeru = wp.vec3(0.0, 0.5, 0.5)
+        staggerv = wp.vec3(0.5, 0.0, 0.5)
+        staggerw = wp.vec3(0.5, 0.5, 0.0)
         
-    for i in range(ne):
-        a = v_transformed(sihoutte[i][0], vertices, x, theta)
-        b = v_transformed(sihoutte[i][1], vertices, x, theta)
-        ret = wp.min(ret, dis_to_ab(a, b, p))
-    return ret * sgn
+        # grid points 
+        self.precompute_phi_with_cached_levelset(phi_tmp, rc, x_offset, y_offset, z_offset, h)
+        # u, v, w face center
+        self.precompute_phi_with_cached_levelset(fuf, rc, x_offset, y_offset, z_offset, h, owneru, staggeru)
+        self.precompute_phi_with_cached_levelset(fvf, rc, x_offset, y_offset, z_offset, h, ownerv, staggerv)
+        self.precompute_phi_with_cached_levelset(fwf, rc, x_offset, y_offset, z_offset, h, ownerw, staggerw)
 
-@wp.func
-def signed_dis_to_mesh_3d(
-    indices: wp.array1d(dtype = wp.vec3i), 
-    vertices: wp.array1d(dtype = wp.vec3), 
-    p: wp.vec3, 
-    x: wp.vec3, q: wp.quat) -> float:
-    '''compute signed distance from p to a closed mesh'''
-    
-    ne = indices.shape[0]
-    ret = MAX_DIST
 
-    inside = inside_closed_mesh(indices, vertices, x, q, p)
-    sgn = wp.select(inside, -1.0, 1.0)
         
-    for i in range(ne):
-        a = v_transformed(indices[i][0], vertices, x, q)
-        b = v_transformed(indices[i][1], vertices, x, q)
-        c = v_transformed(indices[i][2], vertices, x, q)
-        ret = wp.min(ret, dis_to_abc(a, b, c, p))
-    return ret * sgn
+        wp.launch(phi_to_fraction, dim = fuf.shape, inputs = [phi_tmp, fuf, 0])
+        wp.launch(phi_to_fraction, dim = fvf.shape, inputs = [phi_tmp, fvf, 1])
+        wp.launch(phi_to_fraction, dim = fwf.shape, inputs = [phi_tmp, fwf, 2])
 
-@wp.kernel
-def test_cube_kernel(
-    x: wp.array1d(dtype = wp.vec3),
-    q: wp.quat,
-    phi: wp.array1d(dtype = float)
-):
-    i = wp.tid()
-    phi[i] = _sdf_cube(x[i] - wp.vec3(0.5, 0.5, 0.0), wp.vec3(0.2, 0.2, 0.2), q)
-
-@wp.kernel
-def init_samples(
-    x: wp.array1d(dtype = wp.vec3),
-):
-    i = wp.tid()
-    r = wp.rand_init(315, i)
-    # x[i] = wp.vec3(wp.randf(r), wp.randf(r), 0.5)
-    x[i] = wp.vec3(wp.randf(r), wp.randf(r), wp.randf(r))
-
-
-def test_cube():
-    import matplotlib.pyplot as plt
-    sample_points = wp.zeros((n_sample), dtype = wp.vec3)
-    phi = wp.zeros((n_sample), dtype = float)
-    wp.launch(init_samples, dim = (n_sample), inputs = [sample_points])
-    dt = np.pi / 30
-    sample_points_np = sample_points.numpy()
-    for k in range(6):
-        wp.launch(test_cube_kernel, dim = (n_sample), inputs = [sample_points, wp.quat(0.0, 0.0, np.cos(dt * k), np.sin(dt * k)), phi])
-        # print(phi.numpy())
-        # print(sample_points.numpy())
-        phi_np = phi.numpy()
-        idx_neg = phi_np[:] < 0.0
-        idx_pos = phi_np[:] > 0.0
-        plt.plot(sample_points_np[idx_neg, 0], sample_points_np[idx_neg, 1], 'ro')
-        plt.plot(sample_points_np[idx_pos, 0], sample_points_np[idx_pos, 1], 'bo')
-
-        plt.show()
-
-
-@wp.kernel
-def mesh_phi(
-    mesh_id: wp.uint64, 
-    x: wp.array1d(dtype = wp.vec3),
-    phi: wp.array1d(dtype = float)
-):
-    i = wp.tid()
-    face = wp.int32(0)
-    bary_u = wp.float32(0.0)
-    bary_v = wp.float32(0.0)
-    dis = wp.float32(0.0)
-    ret = wp.mesh_query_point_sign_normal(mesh_id, x[i], 2.0, dis, face, bary_u, bary_v, 1e-4)
-    phi[i] = dis
-
-    
+    def precompute_fij_3d_deprecated(self, fuf, fvf, fwf, x, q, geometry, owneru, ownerv, ownerw, x_offset, y_offset, z_offset, h, solid_wall_boundary = True, include_static = 1):
+        '''
+        include static: 0 to only include dynamic objects, 1 for both, 2 for static only
+        if solid_wall_boundary is True, it will detect points at actual coarse grid boundary and set fraction to 0.0
+            not necessary for a patch call, but won't do much damage if it's set True 
+        '''
+        ext_shape = (fuf.shape[0], fvf.shape[1], fwf.shape[2])
+        
+        phi_tmp = wp.empty(ext_shape, dtype = float)
+        wp.launch(precompute_grid_point_phi, dim = ext_shape, inputs = [phi_tmp, x, q, geometry, x_offset, y_offset, z_offset, h, include_static])
+        wp.launch(_precompute_fij_u_3d_cached, dim = fuf.shape, inputs = [phi_tmp, fuf, x, q, geometry, owneru, x_offset, y_offset, z_offset, h, include_static])
+        wp.launch(_precompute_fij_v_3d_cached, dim = fvf.shape, inputs = [phi_tmp, fvf, x, q, geometry, ownerv, x_offset, y_offset, z_offset, h, include_static])
+        wp.launch(_precompute_fij_w_3d_cached, dim = fwf.shape, inputs = [phi_tmp, fwf, x, q, geometry, ownerw, x_offset, y_offset, z_offset, h, include_static])
+        # wp.launch(_precompute_fij_u_3d, dim = fuf.shape, inputs = [fuf, x, q, geometry, owneru, x_offset, y_offset, z_offset, h, include_static])
+        # wp.launch(_precompute_fij_v_3d, dim = fvf.shape, inputs = [fvf, x, q, geometry, ownerv, x_offset, y_offset, z_offset, h, include_static])
+        # wp.launch(_precompute_fij_w_3d, dim = fwf.shape, inputs = [fwf, x, q, geometry, ownerw, x_offset, y_offset, z_offset, h, include_static])
+        if solid_wall_boundary:
+            wp.launch(_set_fij_boundary_3d, dim = (1), inputs = [fuf, fvf, fwf, 0.0, x_offset, y_offset, z_offset, h])

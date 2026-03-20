@@ -1,117 +1,14 @@
 from const_param import *
-from example_fluid import Example, flatten
-from advect import advect_3d, advect_phi, advect_uv_mc
+from example_fluid import Example
+from advect import advect_phi, advect_uv_mc
 from subtract_gradient import u_subtract_gradient_batty_3d, v_subtract_gradient_batty_3d, w_subtract_gradient_batty_3d, u_subtract_gradient_tag, v_subtract_gradient_tag, w_subtract_gradient_tag
-from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, min_kernel, process_tag, exclude_rigid_phi, set_unknown_3d
+from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, exclude_rigid_phi, set_unknown_3d
 from adjustable import integrate_3d, set_phi_3d
 from extrapolate import extrapolate_by_1
 from divergence import divergence_fractional_3d, invalidate, mask_with_tag, divergence_tag
-from geometry_derived import _set_fij_boundary_3d
 from particles import ParticleSystem
 from rigid_coupling import RigidCoupling
 import numpy as np
-
-@wp.kernel
-def merge_water_solid_phi_3d(
-    phi_water: wp.array3d(dtype=float),
-    phi_solid: wp.array3d(dtype=float),
-):
-    i, j, k = wp.tid()
-    phi_solid[i, j, k] = wp.min(phi_water[i, j, k], phi_solid[i, j, k])
-
-@wp.kernel
-def tag_interior_cells_3d(
-    phi: wp.array3d(dtype=float), 
-    tag: wp.array3d(dtype=int)):
-    i, j, k = wp.tid()
-    tag[i, j, k] = wp.select(center_in_fluid_3d(phi, i, j, k), 0, 1)
-
-@wp.kernel
-def density_from_phi_3d(
-    phi: wp.array3d(dtype=float),
-    rho_u: wp.array3d(dtype=float),
-    rho_v: wp.array3d(dtype=float),
-    rho_w: wp.array3d(dtype=float)
-):
-    i, j, k = wp.tid()
-    pc = phi[i, j, k]
-
-    pl = sample_3d(phi, i - 1, j, k)
-    pb = sample_3d(phi, i, j - 1, k)
-    pf = sample_3d(phi, i, j, k - 1)
-
-    rho_u[i, j, k] = fraction_of_fluid(pc, pl) 
-    rho_v[i, j, k] = fraction_of_fluid(pc, pb)
-    rho_w[i, j, k] = fraction_of_fluid(pc, pf)
-
-    if i == gridx - 1:
-        rho_u[i + 1,  j, k] = wp.select(pc < 0.0, 0.0, 1.0)    
-    if j == gridy - 1:
-        rho_v[i, j + 1, k] = wp.select(pc < 0.0, 0.0, 1.0)
-    if k == gridz - 1:
-        rho_w[i, j, k + 1] = wp.select(pc < 0.0, 0.0, 1.0)
-
-
-
-@wp.kernel
-def flatten_tag(
-    u: wp.array3d(dtype = float),
-    vis: wp.array2d(dtype = float),
-    tag: wp.array3d(dtype = int)
-):
-    i, j = wp.tid()
-    gridz = u.shape[2]
-
-    if tag[i, j, gridz // 2] == 2:
-        vis[i, j] = 0.5
-    elif tag[i, j, gridz // 2] == 1:
-        vis[i, j] = -0.5
-    else: 
-        vis[i, j] = 0.0
-    # else: 
-    #     vis[i, j] = u[i, j, gridz // 2]
-
-
-@wp.kernel
-def flatteni(
-    u: wp.array3d(dtype = int),
-    vis: wp.array2d(dtype = float),
-    phi: wp.array3d(dtype = float)
-):
-    i, j = wp.tid()
-    gridz = u.shape[2]
-    # if phi[i, j, gridz * 2 // 4] <= 0.0:
-    if False:
-        vis[i, j] = 0.5
-    else: 
-        vis[i, j] = float(u[i, j, gridz * 2 // 4]) * 0.5
-
-
-@wp.kernel
-def expand(
-    phi: wp.array3d(dtype = float),
-    odd: int
-):
-    i, j, k = wp.tid()
-    gridx = phi.shape[0]
-    gridy = phi.shape[1]
-    gridz = phi.shape[2]
-    if (i  + j + k) %  2 == odd and i > 0 and j > 0 and k > 0 and i < gridx - 1 and j < gridy - 1 and k < gridz - 1:
-        
-        avg = (phi[i - 1, j, k ] + phi[i + 1, j, k] + phi[i, j - 1, k] + phi[i, j + 1, k] + phi[i, j, k - 1] + phi[i, j, k + 1]) / 6.0
-        phi[i, j, k] = wp.min(phi[i, j, k], avg)
-
-
-@wp.kernel
-def include_water_phi(
-    phi_water: wp.array3d(dtype=float),
-    phi_rigid: wp.array3d(dtype=float)
-):
-    i, j, k = wp.tid()
-    if phi_water[i, j, k] < 0.0:
-        phi_rigid[i, j, k] = phi_water[i, j, k]
-
-
         
 class WaterExample3d(Example):
     def __init__(self):
@@ -122,7 +19,6 @@ class WaterExample3d(Example):
         self.phi1 = wp.zeros(shape, dtype=float)
 
         self.phi_static = wp.zeros(shape, dtype = float)
-        self.p2g = True
 
         self.u2 = wp.zeros(shapeu, dtype = float)
         self.v2 = wp.zeros(shapev, dtype = float)
@@ -131,7 +27,7 @@ class WaterExample3d(Example):
         self.v3 = wp.zeros(shapev, dtype = float)
         self.w3 = wp.zeros(shapew, dtype = float)
 
-        self.pm = ParticleSystem(shape, sparsity=4) if self.p2g else None
+        self.pm = ParticleSystem(shape, sparsity=4)
 
         super().__init__()
 
@@ -144,8 +40,8 @@ class WaterExample3d(Example):
         rc.compute_rigid_phi(self.phi_static, include_static= 2)
         rc.compute_rigid_phi(self.phi_rigid)
         wp.launch(exclude_rigid_phi, dim = shape, inputs = [self.phi_rigid, self.phi0])
-        if self.p2g:
-            self.pm.initialize_particles(self.phi0, self.u0, self.v0, self.w0)
+
+        self.pm.initialize_particles(self.phi0, self.u0, self.v0, self.w0)
 
     def solve_multigrid_water_3d(self, mg_solver, p_pair = None):
         if p_pair is None:
@@ -165,13 +61,12 @@ class WaterExample3d(Example):
         # (self.rho0, self.rho1) = (self.rho1, self.rho0)
         (self.phi0, self.phi1) = (self.phi1, self.phi0)
 
-        if self.p2g:
-            with wp.ScopedTimer("p2g", active=timer_active, synchronize=True):
-                self.pm.p2g(self.u2, self.v2, self.w2, self.u3, self.v3, self.w3)
-            with wp.ScopedTimer("step phi", active=timer_active, synchronize=True):
-                self.pm.nb_flip_step_phi(self.phi0, self.phi_rigid)
-            with wp.ScopedTimer("nb combine", active=timer_active, synchronize=True):
-                self.pm.nbcombine(self.u0, self.v0, self.w0, self.u2, self.v2, self.w2, self.phi0)
+        with wp.ScopedTimer("p2g", active=timer_active, synchronize=True):
+            self.pm.p2g(self.u2, self.v2, self.w2, self.u3, self.v3, self.w3)
+        with wp.ScopedTimer("step phi", active=timer_active, synchronize=True):
+            self.pm.nb_flip_step_phi(self.phi0, self.phi_rigid)
+        with wp.ScopedTimer("nb combine", active=timer_active, synchronize=True):
+            self.pm.nbcombine(self.u0, self.v0, self.w0, self.u2, self.v2, self.w2, self.phi0)
 
     def ext_forces(self):
         # not updating the emitters
@@ -205,37 +100,6 @@ class WaterExample3d(Example):
         self.pff.tag_dirichlet(self.tag, self.phi0)
         self.pff.tag_neumann(self.tag, self.phi_rigid)
         # self.pff.precompute_tag(self.tag, rc.x_pair.cur, rc.theta_pair.cur, rc.rigid_geometry)
-
-    def apply_coupling_force(self, rc: RigidCoupling = None):
-        if rc is None:
-            rc = self.rc
-
-        self.divergence(rc)
-
-        if use_mgpcg:
-        # if False:
-            wp.copy(self.tag_pc, self.tag)
-            wp.launch(process_tag, dim = self.tag_pc.shape, inputs = [self.tag_pc])
-
-            self.call_mgpcg(self.pc_pair.cur, self.tag_pc)
-        else:
-            with wp.ScopedTimer("mg pc solve", active=timer_active, synchronize=True):
-                self.pc_pair.cur.zero_()
-                self.pc_pair.nxt.zero_()
-                self.solve_multigrid_water_3d(self.mg_solver, self.pc_pair)
-        
-        if not static_objects:
-            rc.force.zero_()
-            rc.torque.zero_()
-            wp.launch(_set_fij_boundary_3d, dim = (1), inputs = [self.fu, self.fv, self.fw, 1.0, 0.0, 0.0, 0.0, h0])
-            rc.compute_forces_then_integrate(self.pc_pair.cur, self.fu, self.fv, self.fw, self.u_owner, integrate = True)
-            wp.launch(_set_fij_boundary_3d, dim = (1), inputs = [self.fu, self.fv, self.fw, 0.0, 0.0, 0.0, 0.0, h0])
-            print(f"coupling force {rc.force.numpy()[0]}, torque {rc.torque.numpy()[0]}")
-
-        rc.rigid_step_paired(dt)
-        if time_scale != 0:
-            self.save_pc()
-        # wp.launch(scale_by_3d, dim = shape, inputs = [self.pc_pair.cur, 1 / h0])
     
     def divergence(self, rc: RigidCoupling):
         rc.precompute_solid_vel_3d(rc.x_pair.cur, rc.theta_pair.cur, rc.v, rc.omega, rc.rigid_geometry, self.u_rigid, self.v_rigid, self.w_rigid, self.u_owner, self.v_owner, self.w_owner) 

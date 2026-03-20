@@ -98,8 +98,9 @@ if __name__ == "__main__":
 
     example = WaterExample3d() if water else Example()
 
-    ps.init()
+    ps.set_bounding_box(np.zeros(3), np.ones(3) * res)
     ps.set_ground_plane_mode("none")
+    ps.init()
     viewer = PSViewer(example)
     ps.set_user_callback(viewer.callback)
     ps.show()

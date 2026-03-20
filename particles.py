@@ -52,7 +52,7 @@ def _resample_1(phi: wp.array3d(dtype = float),
     cond1 = wp.min(cell) >= 0 and wp.max(cell, shape) == shape and p < activated[0]
     cond2 = offs < clip_max and not (phi[i, j, k] < -R or phi[i, j, k] > h)
 
-    dele = wp.select(cond1 and cond2, 1, 0)
+    dele = wp.where(cond1 and cond2, 0, 1)
 
     deleted[p] = dele
 
@@ -357,32 +357,9 @@ def density_from_phi(
     rho_v[i, j] = fraction_of_fluid(pc, pb)
 
     if i == gridx - 1:
-        rho_u[i + 1,  j] = wp.select(pc < 0.0, 0.0, 1.0)    
+        rho_u[i + 1,  j] = wp.where(pc < 0.0, 1.0, 0.0)    
     if j == gridy - 1:
-        rho_v[i, j + 1] = wp.select(pc < 0.0, 0.0, 1.0)
-    # if pc < 0.0:
-    #     rho_u[i, j] = wp.select(cl, 1.0, fraction_of_fluid(pc, pl))
-    #     # rho_u[i + 1, j] = wp.select(cr, 1.0, fraction_of_fluid(pc, pr))
-    #     rho_v[i, j] = wp.select(cb, 1.0, fraction_of_fluid(pc, pb))
-    #     # rho_v[i, j + 1] = wp.select(ct, 1.0, fraction_of_fluid(pc, pt))
-
-    #     # rho_u[i, j] = 1.0 if cl else fraction_of_fluid(pc, pl)
-    #     # rho_u[i + 1, j] = 1.0 if cr else fraction_of_fluid(pc, pr)
-    #     # rho_v[i, j] = 1.0 if cb else fraction_of_fluid(pc, pb)
-    #     # rho_v[i, j + 1] = 1.0 if ct else fraction_of_fluid(pc, pt)
-    # else:
-    #     if not cl:
-    #         rho_u[i, j] = 0.0
-    #     else:
-    #         rho_u[i, j] = fraction_of_fluid(pc, pl)
-    #     # if not cr:
-    #     #     rho_u[i + 1, j] = 0.0
-    #     if not cb:
-    #         rho_v[i, j] = 0.0
-    #     else :
-    #         rho_v[i, j] = fraction_of_fluid(pc, pb)
-    #     # if not ct:
-    #     #     rho_v[i, j + 1] = 0.0
+        rho_v[i, j + 1] = wp.where(pc < 0.0, 1.0, 0.0)
 
 
 @wp.func
@@ -500,7 +477,7 @@ def _compute_water_phi(
 @wp.kernel
 def tag_interior_cells(phi: wp.array2d(dtype=float), tag: wp.array2d(dtype=int)):
     i, j = wp.tid()
-    tag[i, j] = wp.select(center_in_fluid(phi, i, j), 0, 1)
+    tag[i, j] = wp.where(center_in_fluid(phi, i, j), 1, 0)
 
 @wp.func 
 def forward_rk3(
@@ -598,26 +575,6 @@ def enforce_boundary(uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float
         for j in range(gridy):
             wf[i, j, 0] = 0.0
             wf[i, j, gridz] = 0.0
-
-# def p2g(x, v, uf, vf, grid_mu, grid_mv):
-#     # _p2g(particles, uf, vf, grid_mu, grid_mv)
-#     grid_mu.zero_()
-#     grid_mv.zero_()
-#     uf.zero_()
-#     vf.zero_()
-
-#     wp.launch(p2g_kernel, dim = x.shape, inputs = [x, v, uf, vf, grid_mu, grid_mv])
-#     # for i in range(0):
-#     #     sweep(uf, vf, grid_mu, grid_mv, 0)
-#     #     sweep(uf, vf, grid_mu, grid_mv, 1)
-
-#     # divide(uf, grid_mu)
-#     # divide(vf, grid_mv)
-#     wp.launch(divide, dim = uf.shape, inputs = [uf, grid_mu])
-#     wp.launch(divide, dim = vf.shape, inputs = [vf, grid_mv])
-#     wp.launch(enforce_boundary, dim = (1), inputs = [uf, vf])
-#     # enforce_boundary(uf, vf)
-
 
 @wp.kernel
 def _initialize(phi: wp.array3d(dtype = float), 

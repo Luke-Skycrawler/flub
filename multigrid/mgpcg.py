@@ -44,9 +44,9 @@ def compute_Ap_mcadams(Ap: wp.array3d(dtype = Any), p: wp.array3d(dtype = Any), 
 def _smooth(z: wp.array3d(dtype = Any), r: wp.array3d(dtype = Any), phase: int):
     i, j, k = wp.tid()
     res = r.shape[0]
-    divdx = wp.select(i == 0 or i == res - 1, 2.0, 1.0)
-    divdy = wp.select(j == 0 or j == res - 1, 2.0, 1.0) 
-    divdz = wp.select(k == 0 or k == res - 1, 2.0, 1.0)
+    divdx = wp.where(i == 0 or i == res - 1, 1.0, 2.0)
+    divdy = wp.where(j == 0 or j == res - 1, 1.0, 2.0) 
+    divdz = wp.where(k == 0 or k == res - 1, 1.0, 2.0)
     if (i + j + k) & 1 == phase:
         z[i, j, k] = z[i, j, k] + (r[i, j, k] + neighbor_sum(z, wp.vec3i(i, j, k))) / (divdx + divdy + divdz)
 
@@ -130,11 +130,11 @@ def neighbor_dot_tag(x: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), 
         Im = wp.max(lower, I - offset)
         
 
-        fp = wp.select(tag[Ip[0], Ip[1], Ip[2]] < 2, 0.0, 1.0)
-        fm = wp.select(tag[Im[0], Im[1], Im[2]] < 2, 0.0, 1.0)
+        fp = wp.where(tag[Ip[0], Ip[1], Ip[2]] < 2, 1.0, 0.0)
+        fm = wp.where(tag[Im[0], Im[1], Im[2]] < 2, 1.0, 0.0)
 
-        xp = wp.select(tag[Ip[0], Ip[1], Ip[2]] == 0, x[Ip[0], Ip[1], Ip[2]], 0.0) 
-        xm = wp.select(tag[Im[0], Im[1], Im[2]] == 0, x[Im[0], Im[1], Im[2]], 0.0)
+        xp = wp.where(tag[Ip[0], Ip[1], Ip[2]] == 0, 0.0, x[Ip[0], Ip[1], Ip[2]]) 
+        xm = wp.where(tag[Im[0], Im[1], Im[2]] == 0, 0.0, x[Im[0], Im[1], Im[2]])
 
         ret += (xp - x[I[0], I[1], I[2]]) * fp + (xm - x[I[0], I[1], I[2]]) * fm
 

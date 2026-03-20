@@ -168,7 +168,7 @@ def sample_velocity_3d(
     f = sample_3d(v_staggered, iu_shift + 1, iv, iw_shift + 1)
     g = sample_3d(v_staggered, iu_shift, iv + 1, iw_shift + 1)
     h = sample_3d(v_staggered, iu_shift + 1, iv + 1, iw_shift + 1)
-    vy = wp.wp.lerp(wp.wp.lerp(wp.wp.lerp(a, b, fs), wp.wp.lerp(c, d, fs), fv), wp.wp.lerp(wp.wp.lerp(e, f, fs), wp.wp.lerp(g, h, fs), fv), fr)
+    vy = wp.lerp(wp.lerp(wp.lerp(a, b, fs), wp.lerp(c, d, fs), fv), wp.lerp(wp.lerp(e, f, fs), wp.lerp(g, h, fs), fv), fr)
 
     a = sample_3d(w_staggered, iu_shift, iv_shift, iw)
     b = sample_3d(w_staggered, iu_shift + 1, iv_shift, iw)
@@ -182,30 +182,6 @@ def sample_velocity_3d(
     vz = wp.lerp(wp.lerp(wp.lerp(a, b, fs), wp.lerp(c, d, fs), ft), wp.lerp(wp.lerp(e, f, fs), wp.lerp(g, h, fs), ft), fw)
     return wp.vec3(vx, vy, vz)
 
-
-@wp.func
-def backtrace(uf: wp.array2d(dtype=float), vf: wp.array2d(dtype=float), p: wp.vec2, dt: float, h: float):
-    v1 = sample_velocity_2d(uf, vf, p)
-    p1 = p - 0.5 * dt / h * v1
-    v2 = sample_velocity_2d(uf, vf, p1)
-    p2 = p - 0.75 * dt / h * v2
-    v3 = sample_velocity_2d(uf, vf, p2)
-    p -= dt / h * ((2.0 / 9.0) * v1 + (1.0 / 3.0) * v2 + (4.0 / 9.0) * v3)
-    return p
-
-@wp.func
-def backtrace(
-    uf: wp.array3d(dtype=float), 
-    vf: wp.array3d(dtype=float), 
-    wf: wp.array3d(dtype=float),
-    p: wp.vec3, dt: float, h: float):
-    v1 = sample_velocity_3d(uf, vf, wf, p)
-    p1 = p - 0.5 * dt / h * v1
-    v2 = sample_velocity_3d(uf, vf, wf, p1)
-    p2 = p - 0.75 * dt / h * v2
-    v3 = sample_velocity_3d(uf, vf, wf, p2)
-    p -= dt / h * ((2.0 / 9.0) * v1 + (1.0 / 3.0) * v2 + (4.0 / 9.0) * v3)
-    return p
 
 
 @wp.func
@@ -702,9 +678,6 @@ def is_interior_cell(tag: wp.array2d(dtype = int), i: int, j: int):
 def is_interior_cell_3d(tag: wp.array3d(dtype = int), i: int, j: int, k: int):
     return 0 <= i and i < tag.shape[0] and 0 <= j and j < tag.shape[1] and 0 <= k and k < tag.shape[2] and tag[i, j, k] != 0
 
-@wp.func
-def in_bound(p: float, res: int):
-    return 0.0 <= p and p < float(res)
 @wp.func 
 def fraction_of_fluid(phi1: float, phi2: float):
     ret = 0.0
@@ -780,7 +753,7 @@ def process_tag(
     tag: wp.array3d(dtype = int)
 ):
     i, j, k = wp.tid()
-    tag[i, j, k] = wp.select(tag[i, j, k] == 0, 1, 0)
+    tag[i, j, k] = wp.where(tag[i, j, k] == 0, 0, 1)
 
 
 @wp.kernel
