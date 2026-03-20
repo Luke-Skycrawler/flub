@@ -1,6 +1,6 @@
 # from vis import Visualizer
 import numpy as np 
-from ..utils.mesh import MeshBase, Mesh, normalize_xz, normalize, center_axis
+from utils.mesh import MeshBase, Mesh, normalize_xz, normalize, center_axis
 import json 
 from typing import List
 # import quaternion as quat

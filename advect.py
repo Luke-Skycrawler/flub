@@ -1,6 +1,5 @@
-from .const_param import *
-
-from .utils.util import backtrace, bilerp, bilerpu, bilerpv, trilerp, trilerpu, trilerpv, trilerpw, in_bound, sample_3d, trilerp_stagger
+from const_param import *
+from utils.util import backtrace, bilerp, bilerpu, bilerpv, trilerp, trilerpu, trilerpv, trilerpw, in_bound, sample_3d, trilerp_stagger
 
 @wp.kernel
 def advect_simple(

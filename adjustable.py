@@ -1,5 +1,5 @@
-from .const_param import *
-from .geometry import _sdf_cube
+from const_param import *
+from geometry import _sdf_cube
 @wp.kernel
 def integrate_3d(
     v: wp.array3d(dtype=float), 

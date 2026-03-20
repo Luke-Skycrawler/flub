@@ -1,5 +1,5 @@
-from .const_param import *
-from .utils.util import sample_u, sample_v, sample, sample_3d
+from const_param import *
+from utils.util import sample_u, sample_v, sample, sample_3d
 @wp.kernel
 def divergence_fractional(
     uf: wp.array2d(dtype = float), 

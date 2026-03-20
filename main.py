@@ -5,14 +5,15 @@ from water_3d import WaterExample3d, Example
 import polyscope as ps
 import polyscope.imgui as gui
 import os
-import pyHouGeoIO
+# import pyHouGeoIO
 
 
 class PSViewer:
     def __init__(self, fluids):
         self.fluids = fluids
 
-        self.ps_mesh = ps.register_surface_mesh("rod", self.V, self.F)
+        self.V, self.F = fluids.render()
+        self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
         self.frame = 0
         self.ui_pause = True
         self.animate = False
@@ -34,17 +35,15 @@ class PSViewer:
             print(f"output/x_{self.frame}.npy saved")
         if self.animate: 
             self.fluids.step()
-
-            # save functions here 
+            self.V, self.F = self.fluids.render()
+            self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
     
-            self.particles = self.fluids.states.x.numpy()
-            self.ps_mesh.update_vertex_positions(self.V)
-            self.frame = self.rod.frame
+            # self.particles = self.fluids.states.x.numpy()
             
             print("frame = ", self.frame)
 
-            if self.frame % self.capture_interval == 0:
-                self.save()
+            # if self.frame % self.capture_interval == 0:
+            #     self.save()
         if self.frame >= self.end_frame:
             print(f"end frame = {self.frame} reached, exiting")
             quit()

@@ -3,7 +3,7 @@ from geometry import sdf_argmin_3d, GeometryType2D, GeometryType3D
 from utils.util import TexPair, compute_v_solid_2d, compute_v_solid_3d, is_cutcell_2d, is_cutcell_3d
 import numpy as np
 from utils.scene import WarpScene
-import warp.sim as sim
+# import warp.sim as sim
 from typing import List
 # import pyopenvdb as vdb
 rho = 1.0
@@ -60,7 +60,7 @@ def geometry_from_scene(scene):
 
 class RigidCoupling:
     def __init__(self):
-        builder = sim.ModelBuilder(gravity = -gravity)
+        # builder = sim.ModelBuilder(gravity = -gravity)
         self.ke = 1.0e5
         self.kd = 250
         self.kf = 0
@@ -92,61 +92,63 @@ class RigidCoupling:
         self.time = 0.0
 
         self.reset()
-        xnp = self.x_pair.cur.numpy()
-        qnp = self.theta_pair.cur.numpy()
-        builder.rigid_contact_margin = 5e-5
-        for i in range(n_rigids):
-            b = builder.add_body(
-                origin = wp.transform(
-                    xnp[i], wp.quat_identity()
-                )
-            )
-            obj=  self.scene.scene_objects[i]
-            if obj.shape == "":
+        # xnp = self.x_pair.cur.numpy()
+        # qnp = self.theta_pair.cur.numpy()
 
-                s = builder.add_shape_mesh(
-                    body = b, 
-                    mesh = sim.Mesh(obj.V, obj.F.flatten()),
-                    ke = self.ke,
-                    kd = self.kd,
-                    kf = self.kf,
-                    density = 1000.0,
-                    mu = 0.0
-                )
-            elif obj.shape == "box":
-                r = obj.radius
-                s = builder.add_shape_box(
-                    b, 
-                    hx = r, 
-                    hy = r,
-                    hz = r,
-                    ke = self.ke, 
-                    kd = self.kd,
-                    kf = self.kf,
-                    mu = 0.0, 
-                    density = 1000.0
-                )
-            elif obj.shape == "sphere":
-                r = obj.radius
-                s = builder.add_shape_sphere(
-                    b, 
-                    radius = r, 
-                    ke = self.ke, 
-                    kd = self.kd,
-                    kf = self.kf,
-                    mu = 0.0,
-                    density = 1000.0
-                )
-        self.model = builder.finalize()
-        self.model.ground = True
-        self.integrator = sim.XPBDIntegrator(iterations = 2)
-        self.state0 = self.model.state()
-        self.state1 = self.model.state()
 
-        levelset_h, scale_factor = self.set_levelset_res()
-        for i, so in enumerate(self.scene.scene_objects):
-            if so.mesh is not None:
-                self.compute_cached_levelset(i, levelset_h, scale_factor)
+        # builder.rigid_contact_margin = 5e-5
+        # for i in range(n_rigids):
+        #     b = builder.add_body(
+        #         origin = wp.transform(
+        #             xnp[i], wp.quat_identity()
+        #         )
+        #     )
+        #     obj=  self.scene.scene_objects[i]
+        #     if obj.shape == "":
+
+        #         s = builder.add_shape_mesh(
+        #             body = b, 
+        #             mesh = sim.Mesh(obj.V, obj.F.flatten()),
+        #             ke = self.ke,
+        #             kd = self.kd,
+        #             kf = self.kf,
+        #             density = 1000.0,
+        #             mu = 0.0
+        #         )
+        #     elif obj.shape == "box":
+        #         r = obj.radius
+        #         s = builder.add_shape_box(
+        #             b, 
+        #             hx = r, 
+        #             hy = r,
+        #             hz = r,
+        #             ke = self.ke, 
+        #             kd = self.kd,
+        #             kf = self.kf,
+        #             mu = 0.0, 
+        #             density = 1000.0
+        #         )
+        #     elif obj.shape == "sphere":
+        #         r = obj.radius
+        #         s = builder.add_shape_sphere(
+        #             b, 
+        #             radius = r, 
+        #             ke = self.ke, 
+        #             kd = self.kd,
+        #             kf = self.kf,
+        #             mu = 0.0,
+        #             density = 1000.0
+        #         )
+        # self.model = builder.finalize()
+        # self.model.ground = True
+        # self.integrator = sim.XPBDIntegrator(iterations = 2)
+        # self.state0 = self.model.state()
+        # self.state1 = self.model.state()
+
+        # levelset_h, scale_factor = self.set_levelset_res()
+        # for i, so in enumerate(self.scene.scene_objects):
+        #     if so.mesh is not None:
+        #         self.compute_cached_levelset(i, levelset_h, scale_factor)
         
     def set_levelset_res(self):
         '''decide the resolution of the levelset according to the finest patch'''
@@ -155,25 +157,25 @@ class RigidCoupling:
             finest = min(finest, so.patch_config.h_multiply)
         return finest * h0, np.rint(1.0 / finest).astype(int)
 
-    def compute_cached_levelset(self, i, levelset_h, scale_factor = 2):
-        '''resolution should be decided by the object size and levelset h'''
-        so = self.scene.scene_objects[i]
-        if so.static:
-            # large static scene objects
-            levelset_shape = (gridx * scale_factor, gridy * scale_factor, gridz * scale_factor)
-        else:
-            # the object is contained in the patch
-            shapep = so.patch_config.res
-            scale = int(np.rint(scale_factor * so.patch_config.h_multiply))
-            levelset_shape = (shapep[0] * scale, shapep[1] * scale, shapep[2] * scale)
+    # def compute_cached_levelset(self, i, levelset_h, scale_factor = 2):
+    #     '''resolution should be decided by the object size and levelset h'''
+    #     so = self.scene.scene_objects[i]
+    #     if so.static:
+    #         # large static scene objects
+    #         levelset_shape = (gridx * scale_factor, gridy * scale_factor, gridz * scale_factor)
+    #     else:
+    #         # the object is contained in the patch
+    #         shapep = so.patch_config.res
+    #         scale = int(np.rint(scale_factor * so.patch_config.h_multiply))
+    #         levelset_shape = (shapep[0] * scale, shapep[1] * scale, shapep[2] * scale)
 
-        transform = vdb.createLinearTransform(voxelSize = levelset_h)
-        mesh = self.scene.scene_objects[i]
-        grid = vdb.FloatGrid.createLevelSetFromPolygons(mesh.V, mesh.F, np.zeros((0, 4), dtype = int), transform = transform)
-        arr = np.zeros(levelset_shape, dtype = float)
-        ijk = (-levelset_shape[0] // 2, -levelset_shape[1] // 2, -levelset_shape[2] // 2)
-        grid.copyToArray(arr, ijk = ijk)
-        self.cached_levelset[i] = (wp.from_numpy(arr, dtype = float, shape = arr.shape), wp.vec3(ijk[0], ijk[1], ijk[2]), levelset_h)
+    #     transform = vdb.createLinearTransform(voxelSize = levelset_h)
+    #     mesh = self.scene.scene_objects[i]
+    #     grid = vdb.FloatGrid.createLevelSetFromPolygons(mesh.V, mesh.F, np.zeros((0, 4), dtype = int), transform = transform)
+    #     arr = np.zeros(levelset_shape, dtype = float)
+    #     ijk = (-levelset_shape[0] // 2, -levelset_shape[1] // 2, -levelset_shape[2] // 2)
+    #     grid.copyToArray(arr, ijk = ijk)
+    #     self.cached_levelset[i] = (wp.from_numpy(arr, dtype = float, shape = arr.shape), wp.vec3(ijk[0], ijk[1], ijk[2]), levelset_h)
 
     def get_prescribed_vel(self, i, dt):
         sos = self.scene.scene_objects

@@ -134,6 +134,11 @@ class Example:
         self.mgpcg = MGPCG(3, shape, 3, float) if use_mgpcg else None
         self.timing_results: List[Dict] = []
         self.frame = 0
+
+        self.max_verts = int(1e6)
+        self.max_tris = int(1e6)
+        self.mc = wp.MarchingCubes(gridx, gridy, gridz, self.max_verts, self.max_tris)
+        
         self.reset()
 
     def call_mgpcg(self, pf, smoother = "fraction"):
@@ -296,8 +301,8 @@ class Example:
         with wp.ScopedTimer("step(): Dh", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
             self.rigid_swap(rc)
 
-        with wp.ScopedTimer("step(): coupling force", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
-            self.apply_coupling_force(rc)
+        # with wp.ScopedTimer("step(): coupling force", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
+        #     self.apply_coupling_force(rc)
 
         # 5. recover solid state at (t + 1) 
         # do nothing
@@ -307,3 +312,13 @@ class Example:
             self.project(rc = rc)
         self.frame += 1
 
+    def render(self, iso_value = 1e-2):
+        v = np.zeros((0, 3), dtype = float)
+        f = np.zeros((0, 3), dtype = int)
+        rnp = self.rho0.numpy()
+        if np.max(rnp) > iso_value and np.min(rnp) < iso_value:
+            self.mc.surface(self.rho0, iso_value)
+            v = self.mc.verts.numpy().reshape(-1, 3)
+            f = self.mc.indices.numpy().reshape(-1, 3)
+        return v, f
+        

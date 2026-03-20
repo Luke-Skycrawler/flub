@@ -1,14 +1,14 @@
-from .const_param import *
-from .example_fluid import Example, flatten
+from const_param import *
+from example_fluid import Example, flatten
 from advect import advect_3d, advect_phi, advect_uv_mc
-from .subtract_gradient import u_subtract_gradient_batty_3d, v_subtract_gradient_batty_3d, w_subtract_gradient_batty_3d, u_subtract_gradient_tag, v_subtract_gradient_tag, w_subtract_gradient_tag
+from subtract_gradient import u_subtract_gradient_batty_3d, v_subtract_gradient_batty_3d, w_subtract_gradient_batty_3d, u_subtract_gradient_tag, v_subtract_gradient_tag, w_subtract_gradient_tag
 from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, min_kernel, process_tag, exclude_rigid_phi, set_unknown_3d
 from adjustable import integrate_3d, set_phi_3d
 from extrapolate import extrapolate_by_1
 from divergence import divergence_fractional_3d, invalidate, mask_with_tag, divergence_tag
 from geometry_derived import _set_fij_boundary_3d
 from particles import ParticleSystem
-from .rigid_coupling import RigidCoupling
+from rigid_coupling import RigidCoupling
 import numpy as np
 
 @wp.kernel

@@ -1,5 +1,5 @@
-from .const_param import *
-from .utils.util import sample_2d, sample_3d, fraction_of_fluid
+from const_param import *
+from utils.util import sample_2d, sample_3d, fraction_of_fluid
 eps = h0 * 1e-2
 
 @wp.kernel

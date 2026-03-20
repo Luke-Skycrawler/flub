@@ -3,7 +3,7 @@ import warp as wp
 import numpy as np
 import igl
 
-from pxr import UsdGeom, Usd
+# from pxr import UsdGeom, Usd
 
 
 def load_usd_mesh(filename, path):

@@ -1,5 +1,5 @@
-from .const_param import *
-from .utils.util import sample_velocity_2d, sample_velocity_3d, divide, inv_bilerpu, inv_bilerpv, inv_bilerpw, sample_2d, center_in_fluid, fraction_of_fluid, sample_3d, trilerp
+from const_param import *
+from utils.util import sample_velocity_2d, sample_velocity_3d, divide, inv_bilerpu, inv_bilerpv, inv_bilerpw, sample_2d, center_in_fluid, fraction_of_fluid, sample_3d, trilerp
 from fenwick import FenwickTree
 from typing import Any
 from redistance import redistance

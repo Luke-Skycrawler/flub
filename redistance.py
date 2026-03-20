@@ -1,6 +1,6 @@
 import numpy as np
-from .const_param import *
-from .utils.util import sample_3d, fraction_of_fluid
+from const_param import *
+from utils.util import sample_3d, fraction_of_fluid
 
 vec6 = wp.types.vector(length = 6, dtype = float)
 

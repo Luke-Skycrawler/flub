@@ -1,4 +1,4 @@
-from ..const_param import *
+from const_param import *
 import numpy as np
 # enforcing no-through, free-slip boundary condition
 class TexPair:
