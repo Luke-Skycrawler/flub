@@ -197,10 +197,6 @@ def _precompute_solid_vel_w_3d(
     else:
         w_rigid[i, j, k] = 0.0
 
-@wp.func
-def cross(a: wp.vec2, b: wp.vec2) -> float:
-    return a[0] * b[1] - a[1] * b[0]
-
 
 @wp.kernel
 def compute_forces_3d(
@@ -494,10 +490,6 @@ class RigidCoupling:
         wp.launch(get_xform, dim = self.v.shape, inputs = [self.x_pair.cur, self.theta_pair.cur], outputs = [m])
         return m.numpy()
 
-    def integrate_ext_forces(self):
-        # assert dimension == 3
-        return
-        wp.launch(_integrate_ext_forces, dim = self.v.shape, inputs = [self.v, self.rigid_geometry])
 
     def set_x0q0v0w0(self, _x0, _q0, _v0, _w0):
         # NOTE: don't overwrite the array by allocating another buffer

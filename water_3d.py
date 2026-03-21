@@ -43,13 +43,6 @@ class WaterExample3d(Example):
 
         self.pm.initialize_particles(self.phi0, self.u0, self.v0, self.w0)
 
-    def solve_multigrid_water_3d(self, mg_solver, p_pair = None):
-        if p_pair is None:
-            p_pair = self.p_pair
-        
-        mg_solver.set_fufvfw_rurvrw_tag_all(self.fu, self.fv, self.fw, self.rhou, self.rhov, self.rhow, self.tag)        
-        mg_solver.solve(p_pair, self.div, smoother = "phases")
-
     def advect(self):     
         wp.launch(advect_phi, dim = shape, inputs = [self.u0, self.v0, self.w0, self.phi0, self.phi1, dt, h0])
         # advect_3d(self.u0, self.v0, self.w0, self.rho0, self.u1, self.v1, self.w1, self.rho1)
@@ -73,8 +66,6 @@ class WaterExample3d(Example):
 
         # force integrate
         wp.launch(integrate_3d, dim=shape, inputs=[self.v0, self.rho0, dt])
-        if not static_objects:
-            self.rc.integrate_ext_forces()
 
     def Dh(self, rc: RigidCoupling):
         pff = self.pff

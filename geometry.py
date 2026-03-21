@@ -13,23 +13,6 @@ class GeometryType3D:
     volume: float
 
 _pi2 = wp.constant(np.pi / 2.0)
-@wp.func
-def _sdf_rect(
-    p: wp.vec2, 
-    radius: wp.vec2, 
-    theta: float
-) -> float:
-    ret = 0.0
-    p = wp.vec2(p[0] * wp.cos(theta) + p[1] * wp.sin(theta), p[0] * - wp.sin(theta) + p[1] * wp.cos(theta))
-
-    margin = wp.max(p, -p) - radius # abs is not for vector
-    if wp.max(margin) < 0.0:
-        margin = - margin
-        ret = -(wp.min(margin))
-    else:
-        margin = wp.max(margin, wp.vec2(0.0, 0.0))
-        ret = wp.length(margin)
-    return ret
 
 @wp.func
 def _sdf_cube(

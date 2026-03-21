@@ -45,9 +45,6 @@ gridz = 256
 # gridy = 256
 # gridz = 256
 
-xtype = wp.vec2 
-theta_type = float 
-omega_type = float 
 
 shape = (gridx, gridy, gridz)
 shapeu = (gridx + 1, gridy, gridz)
@@ -73,9 +70,7 @@ static_objects = False
 
 n_particle_per_cell = wp.constant(8)
 
-fft_blend = False
 v_inflow = 0.0
-n_fine_smoothing = 30
 timer_active = True
 
 gen_list = lambda: [{} for _ in range(view_frames)]

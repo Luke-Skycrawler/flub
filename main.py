@@ -11,11 +11,7 @@ import os
 class PSViewer:
     def __init__(self, fluids):
         self.fluids = fluids
-
-        self.V, self.F, self.particles = fluids.render()
-        if self.particles is not None:
-            self.ps_particles = ps.register_point_cloud("particles", self.particles, radius = 1e-3)
-        self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
+        self.render()
         self.frame = 0
         self.ui_pause = True
         self.animate = False
@@ -23,6 +19,12 @@ class PSViewer:
         self.end_frame = 5000
         self.capture_interval = 1
         
+    def render(self): 
+        self.V, self.F, self.particles = self.fluids.render()
+        if self.particles is not None:
+            self.ps_particles = ps.register_point_cloud("particles", self.particles, radius = 5e-4)
+        self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
+
     def callback(self):
         changed, self.ui_pause = gui.Checkbox("Pause", self.ui_pause)
         self.animate = gui.Button("Step") or not self.ui_pause
@@ -37,13 +39,7 @@ class PSViewer:
             print(f"output/x_{self.frame}.npy saved")
         if self.animate: 
             self.fluids.step()
-            self.V, self.F, self.particles = self.fluids.render()
-            self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
-    
-            if self.particles is not None:
-                self.ps_particles = ps.register_point_cloud("particles", self.particles, radius = 1e-3)
-            # self.particles = self.fluids.states.x.numpy()
-            
+            self.render()
             print("frame = ", self.frame)
 
             # if self.frame % self.capture_interval == 0:
