@@ -1,4 +1,4 @@
-from const_param import dt, h0, Field, MACGrid, field_like
+from const_param import dt, h0, shape, shapeu, shapev, shapew, MACGrid, Field
 import warp as wp
 from utils.util import sample_velocity_3d, sample_3d, trilerp_stagger, trilerp
 
@@ -61,49 +61,49 @@ def advect_phi(
 
 @wp.kernel
 def _advect_mc_1(
-    vel: MACGrid,
-    q0: Field,
-    q_tmp: Field,
-    q1: Field
+    args_common: MACGrid,
+    q_in: Field,
+    q_out: Field,
+    q_tmp: wp.array3d(dtype = float)
 ):
     i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j), float(k)) + q0.stagger
-    p1 = backtrace(vel.u.f, vel.v.f, vel.w.f, p, dt, h0)
-    q1.f[i, j, k] = trilerp_stagger(q0.f, p1, q0.stagger)
+    p = wp.vec3(float(i), float(j), float(k)) + q_in.stagger
+    p1 = backtrace(args_common.u.f, args_common.v.f, args_common.w.f, p, dt, h0)
+    q_out.f[i, j, k] = trilerp_stagger(q_in.f, p1, q_in.stagger)
 
 @wp.kernel
 def _advect_mc_2(
-    vel: MACGrid,
-    q0: Field,
-    q_tmp: Field,
-    q1: Field
+    args_common: MACGrid,
+    q_in: Field,
+    q_out: Field,
+    q_tmp: wp.array3d(dtype = float)
 ):
     i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j), float(k)) + q0.stagger
+    p = wp.vec3(float(i), float(j), float(k)) + q_in.stagger
     
-    p2 = backtrace(vel.u.f, vel.v.f, vel.w.f, p, -dt, h0)
-    q_tmp.f[i, j, k] = trilerp_stagger(q1.f, p2, q0.stagger)
+    p2 = backtrace(args_common.u.f, args_common.v.f, args_common.w.f, p, -dt, h0)
+    q_tmp[i, j, k] = trilerp_stagger(q_in.f, p2, q_in.stagger)
     
 
 @wp.kernel
 def _advect_mc_3(
-    vel: MACGrid,
-    q0: Field,
-    q_tmp: Field,
-    q1: Field
+    args_common: MACGrid,
+    q_in: Field,
+    q_out: Field,
+    q_tmp: wp.array3d(dtype = float),
 ):
     i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j), float(k)) + q0.stagger
+    p = wp.vec3(float(i), float(j), float(k)) + q_in.stagger
 
-    p3 = backtrace(vel.u.f, vel.v.f, vel.w.f, p, dt, h0)
-    q_sl = trilerp_stagger(q0.f, p3, q0.stagger)
+    p3 = backtrace(args_common.u.f, args_common.v.f, args_common.w.f, p, dt, h0)
+    q_sl = trilerp_stagger(q_in.f, p3, q_in.stagger)
     
-    q1.f[i, j, k] = q1.f[i, j, k] + 0.5 * (q0.f[i, j, k] - q_tmp.f[i, j, k])
+    q_out.f[i, j, k] = q_out.f[i, j, k] + 0.5 * (q_in.f[i, j, k] - q_tmp[i, j, k])
 
-    min_val, max_val = sample_minmax(q0.f, p3, h0, q0.stagger)
-    cond = min_val < q1.f[i, j, k] and q1.f[i, j, k] < max_val
+    min_val, max_val = sample_minmax(q_in.f, p3, h0, q_in.stagger)
+    cond = min_val < q_out.f[i, j, k] and q_out.f[i, j, k] < max_val
     if not cond:
-        q1.f[i, j, k] = q_sl
+        q_out.f[i, j, k] = q_sl
 
 @wp.func
 def sample_minmax(q_in: wp.array3d(dtype = float), p: wp.vec3, h: float, stagger: wp.vec3):
@@ -126,19 +126,18 @@ def sample_minmax(q_in: wp.array3d(dtype = float), p: wp.vec3, h: float, stagger
 
     return min_val, max_val
 
-def advect_mc(vel0: MACGrid, q0: Field, q1: Field):
-    q_tmp = field_like(q0)
+def advect_mc(args_common: MACGrid, q_in: Field, q_out: Field):
+    q_tmp = wp.empty_like(q_in.f)
+    wp.launch(_advect_mc_1, dim = q_in.f.shape, inputs = [args_common, q_in, q_out, q_tmp])
+    wp.launch(_advect_mc_2, dim = q_in.f.shape, inputs = [args_common, q_in, q_out, q_tmp])
+    wp.launch(_advect_mc_3, dim = q_in.f.shape, inputs = [args_common, q_in, q_out, q_tmp])
 
-    wp.launch(_advect_mc_1, dim = q0.f.shape, inputs = [vel0, q0, q_tmp, q1])
-    wp.launch(_advect_mc_2, dim = q0.f.shape, inputs = [vel0, q0, q_tmp, q1])
-    wp.launch(_advect_mc_3, dim = q0.f.shape, inputs = [vel0, q0, q_tmp, q1])
-
-def advect_uv_mc(vel0: MACGrid, vel1: MACGrid):
-    advect_mc(vel0, vel0.u, vel1.u)
-    advect_mc(vel1, vel0.v, vel1.v)
-    advect_mc(vel0, vel0.w, vel1.w)
+def advect_uv_mc(vel_in: MACGrid, vel_out: MACGrid):
+    advect_mc(vel_in, vel_in.u, vel_out.u)
+    advect_mc(vel_in, vel_in.v, vel_out.v)
+    advect_mc(vel_in, vel_in.w, vel_out.w)
 
 
-def advect_3d(vel0, vel1, q0, q1):    
-    advect_mc(vel0, q0, q1)
-    advect_uv_mc(vel0, vel1)
+def advect_3d(vel: MACGrid, qf: Field, new_vel: MACGrid, new_qf: Field):    
+    advect_mc(vel, qf, new_qf)
+    advect_uv_mc(vel, new_vel)

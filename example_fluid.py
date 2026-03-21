@@ -66,7 +66,7 @@ class Example:
         self.rc.reset()
 
     def advect(self):
-        advect_3d(self.vel0, self.vel1, self.q0, self.q1)
+        advect_3d(self.vel0, self.q0, self.vel1, self.q1)
 
         (self.vel0, self.vel1) = (self.vel1, self.vel0)
         self.q0, self.q1 = self.q1, self.q0
