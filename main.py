@@ -12,7 +12,9 @@ class PSViewer:
     def __init__(self, fluids):
         self.fluids = fluids
 
-        self.V, self.F = fluids.render()
+        self.V, self.F, self.particles = fluids.render()
+        if self.particles is not None:
+            self.ps_particles = ps.register_point_cloud("particles", self.particles, radius = 1e-3)
         self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
         self.frame = 0
         self.ui_pause = True
@@ -35,9 +37,11 @@ class PSViewer:
             print(f"output/x_{self.frame}.npy saved")
         if self.animate: 
             self.fluids.step()
-            self.V, self.F = self.fluids.render()
+            self.V, self.F, self.particles = self.fluids.render()
             self.ps_mesh = ps.register_surface_mesh("surface", self.V, self.F)
     
+            if self.particles is not None:
+                self.ps_particles = ps.register_point_cloud("particles", self.particles, radius = 1e-3)
             # self.particles = self.fluids.states.x.numpy()
             
             print("frame = ", self.frame)

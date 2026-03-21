@@ -1,6 +1,6 @@
-from const_param import *
-from utils.util import sample_2d, sample_3d, fraction_of_fluid
-eps = h0 * 1e-2
+import warp as wp 
+from utils.util import sample_3d, fraction_of_fluid
+eps = 1e-5
 
 
 @wp.kernel
@@ -188,28 +188,6 @@ def w_subtract_gradient_tag_bc(
         else:
             wf[i, j, k] = 0.0
 
-@wp.kernel
-def v_subtract_gradient_batty(
-    vf: wp.array2d(dtype=float),
-    pf: wp.array2d(dtype=float),
-    fv: wp.array2d(dtype=float),
-    phi: wp.array2d(dtype = float),
-    l: float, b: float, h: float):
-    i, j = wp.tid()
-    if 0 < j and j < gridy:
-        if phi[i, j] < 0.0 or phi[i, j - 1] < 0.0:
-            
-            if fv[i, j] == 0.0:
-                vf[i, j] = 0.0
-            else: 
-                pb = wp.where(phi[i, j - 1] >= 0, 0.0, sample_2d(pf, i, j - 1))
-                pt = wp.where(phi[i, j] >= 0, 0.0, sample_2d(pf, i, j))
-                theta = wp.max(0.01, fraction_of_fluid(phi[i, j], phi[i, j - 1]))
-                vf[i, j] = vf[i, j] - (pt - pb) / theta
-        else:
-            vf[i, j] = 0.0
-    else:
-        vf[i, j] = 0.0
 
 @wp.kernel
 def v_subtract_gradient_batty_3d(
@@ -272,7 +250,7 @@ def u_subtract_gradient_fractioned_3d(
     fu: wp.array3d(dtype=float),
     l: float, b: float, f: float, h: float):
 
-    eps = h0 * 1e-2
+    
     i, j, k = wp.tid()
     t = l + float(i) * h
     if not (eps < t and t < 1.0 - eps):
@@ -291,10 +269,10 @@ def v_subtract_gradient_fractioned_3d(
     fv: wp.array3d(dtype=float),
     l: float, b: float, f: float, h: float):
 
-    eps = h0 * 1e-2
     i, j, k = wp.tid()
     t = b + float(j) * h
-    if not (eps < t and t < h0 * float(gridy) - eps):
+    gridy = vf.shape[1] - 1
+    if not (eps < t and t < h * float(gridy) - eps):
         vf[i, j, k] = 0.0
     elif fv[i, j, k] > 0.0:
         pb = sample_3d(pf, i, j - 1, k)
@@ -310,10 +288,10 @@ def w_subtract_gradient_fractioned_3d(
     fw: wp.array3d(dtype=float),
     l: float, b: float, f: float, h: float):
 
-    eps = h0 * 1e-2
     i, j, k = wp.tid()
     t = f + float(k) * h
-    if not (eps < t and t < h0 * float(gridz) - eps):
+    gridz = fw.shape[2] - 1
+    if not (eps < t and t < h * float(gridz) - eps):
         wf[i, j, k] = 0.0
     elif fw[i, j, k] > 0.0:
         pfar = sample_3d(pf, i, j, k - 1)

@@ -1,5 +1,7 @@
-from const_param import *
-from utils.util import sample_velocity_2d, sample_velocity_3d, divide, inv_bilerpu, inv_bilerpv, inv_bilerpw, sample_2d, center_in_fluid, fraction_of_fluid, sample_3d, trilerp
+import warp as wp
+import numpy as np
+from const_param import n_particle_per_cell, h0, res, timer_active, gridx, gridy, gridz
+from utils.util import sample_velocity_3d, divide, inv_bilerpu, inv_bilerpv, inv_bilerpw, sample_3d, trilerp
 from fenwick import FenwickTree
 from typing import Any
 from redistance import redistance
@@ -166,21 +168,20 @@ def excel(
 @wp.kernel
 def _nbcombine_1(
     uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float), 
-    up: wp.array3d(dtype = float), vp: wp.array3d(dtype = float), wp: wp.array3d(dtype = float),
-              phi: wp.array3d(dtype = float), 
-              h: float, r: float, R: float
-              ):
+    uu: wp.array3d(dtype = float), vv: wp.array3d(dtype = float), ww: wp.array3d(dtype = float),
+    phi: wp.array3d(dtype = float), h: float, r: float, R: float):
+    
     i, j, k = wp.tid()
     phiu = 0.0
     if 0 < i and i < res:
         phiu = (phi[i - 1, j, k] + phi[i, j, k]) * 0.5
     if phiu >= -r:
-        uf[i, j, k] = up[i, j, k]
+        uf[i, j, k] = uu[i, j, k]
     
 @wp.kernel
 def _nbcombine_2(
     uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float),
-    up: wp.array3d(dtype = float), vp: wp.array3d(dtype = float), wp: wp.array3d(dtype = float),
+    uu: wp.array3d(dtype = float), vv: wp.array3d(dtype = float), ww: wp.array3d(dtype = float),
               phi: wp.array3d(dtype = float), 
               h: float, r: float, R: float
               ):
@@ -190,22 +191,22 @@ def _nbcombine_2(
     if 0 < j and j < res:
         phiv = (phi[i, j - 1, k] + phi[i, j, k]) * 0.5
     if phiv >= -r:
-        vf[i, j, k] = vp[i, j, k]
+        vf[i, j, k] = vv[i, j, k]
 
 @wp.kernel
 def _nbcombine_3(
     uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float),
-    up: wp.array3d(dtype = float), vp: wp.array3d(dtype = float), wp: wp.array3d(dtype = float),
-              phi: wp.array3d(dtype = float), 
-              h: float, r: float, R: float
-              ):
+    uu: wp.array3d(dtype = float), vv: wp.array3d(dtype = float), ww: wp.array3d(dtype = float),
+    phi: wp.array3d(dtype = float), 
+    h: float, r: float, R: float
+    ):
     
     i, j, k = wp.tid()
     phiw = 0.0
     if 0 < k and k < res:
         phiw = (phi[i, j, k] + phi[i, j, k - 1]) * 0.5
     if phiw >= -r:
-        wf[i, j, k] = wp[i, j, k]
+        wf[i, j, k] = ww[i, j, k]
         
 class ParticleSystem:
     def __init__(self, shape = (256, 256, 256), sparsity = 1):
@@ -339,27 +340,6 @@ class ParticleSystem:
         wp.launch(enforce_boundary, dim = (1), inputs = [uf, vf, wf])
         # enforce_boundary(uf, vf)
 
-@wp.kernel
-def density_from_phi(
-    phi: wp.array2d(dtype=float),
-    rho_u: wp.array2d(dtype=float),
-    rho_v: wp.array2d(dtype=float)
-):
-    i, j = wp.tid()
-    pc = phi[i, j]
-    # cl = center_in_fluid(phi, i - 1, j)
-    # cb = center_in_fluid(phi, i, j - 1)
-
-    pl = sample_2d(phi, i - 1, j)
-    pb = sample_2d(phi, i, j - 1)
-
-    rho_u[i, j] = fraction_of_fluid(pc, pl) 
-    rho_v[i, j] = fraction_of_fluid(pc, pb)
-
-    if i == gridx - 1:
-        rho_u[i + 1,  j] = wp.where(pc < 0.0, 1.0, 0.0)    
-    if j == gridy - 1:
-        rho_v[i, j + 1] = wp.where(pc < 0.0, 1.0, 0.0)
 
 
 @wp.func
@@ -473,22 +453,6 @@ def _compute_water_phi(
     update_min(phi, ix + 1, iy + 1, iz + 1, dh)
     
 
-
-@wp.kernel
-def tag_interior_cells(phi: wp.array2d(dtype=float), tag: wp.array2d(dtype=int)):
-    i, j = wp.tid()
-    tag[i, j] = wp.where(center_in_fluid(phi, i, j), 1, 0)
-
-@wp.func 
-def forward_rk3(
-    uf: wp.array2d(), vf: wp.array2d(), p: wp.vec2, dt: float):
-    v1 = sample_velocity_2d(uf, vf, p)
-    p1 = p + 0.5 * dt * v1 / h0
-    v2 = sample_velocity_2d(uf, vf, p1)
-    p2 = p + 0.75 * dt * v2 / h0
-    v3 = sample_velocity_2d(uf, vf, p2)
-    p3 = p + dt * ((2.0 / 9.0) * v1 + (1.0 / 3.0) * v2 + (4.0 / 9.0) * v3) / h0
-    return p3
 
 @wp.func 
 def forward_rk3_3d(

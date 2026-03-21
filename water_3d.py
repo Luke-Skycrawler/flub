@@ -155,8 +155,6 @@ class WaterExample3d(Example):
         # wp.launch(u_subtract_gradient_fractioned_3d, dim = shapeu, inputs = [self.u0, self.p0, self.fu, 0.0, 0.0, 0.0, h])
         # wp.launch(v_subtract_gradient_fractioned_3d, dim = shapev, inputs = [self.v0, self.p0, self.fv, 0.0, 0.0, 0.0, h])
         # wp.launch(w_subtract_gradient_fractioned_3d, dim = shapew, inputs = [self.w0, self.p0, self.fw, 0.0, 0.0, 0.0, h])
-        if time_scale != 0:
-            wp.launch(scale_by_3d, dim = shape, inputs = [self.p0, h0])
 
     def extrapolate(self, n_cells = 16 * res // 128):
         wp.launch(set_unknown_3d, dim=self.phi0.shape, inputs=[
@@ -164,7 +162,8 @@ class WaterExample3d(Example):
         for _ in range(n_cells):
             extrapolate_by_1(self.u0, self.v0, self.w0, self.u_owner, self.v_owner, self.w_owner)
 
-    def step(self, rc: RigidCoupling):
+    def step(self):
+        rc = self.rc
         # 1. advect the fluid
         with wp.ScopedTimer("step(): global advect", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
             self.advect()
@@ -178,10 +177,10 @@ class WaterExample3d(Example):
         with wp.ScopedTimer("step(): Dh", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
             self.Dh(rc)
 
-        with wp.ScopedTimer("step(): coupling force", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
-            rc.integrate(dt)
-            # 3. apply coupling force and step the rigids
-            self.apply_coupling_force(rc)
+        # with wp.ScopedTimer("step(): coupling force", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
+        #     rc.integrate(dt)
+        #     # 3. apply coupling force and step the rigids
+        #     self.apply_coupling_force(rc)
 
         # # 5. recover solid state at (t + 1) 
         # # do nothing
@@ -199,5 +198,16 @@ class WaterExample3d(Example):
             wp.copy(self.v1, self.v2)
             wp.copy(self.w1, self.w2)
             self.pm.step(self.u0, self.v0, self.w0, dt, self.p0, self.u1, self.v1, self.w1)
-            if time_scale == 0:
-                self.pm.out(self.phi_rigid, self.u0, self.v0, self.w0)
+            self.pm.out(self.phi_rigid, self.u0, self.v0, self.w0)
+
+    def render(self, iso_value = 0.0):
+        v = np.zeros((0, 3), dtype = float)
+        f = np.zeros((0, 3), dtype = int)
+        particles = self.pm.x.numpy()[:self.pm.activated_int] * res
+        
+        rnp = self.phi0.numpy()
+        if np.max(rnp) > iso_value and np.min(rnp) < iso_value:
+            self.mc.surface(self.phi0, iso_value)
+            v = self.mc.verts.numpy().reshape(-1, 3)
+            f = self.mc.indices.numpy().reshape(-1, 3)
+        return v, f, particles

@@ -1,6 +1,20 @@
-from const_param import dt, h0
+from const_param import dt, h0, shape, shapeu, shapev, shapew
 import warp as wp
 from utils.util import sample_velocity_3d, sample_3d, trilerp_stagger, trilerp
+
+@wp.struct 
+class AdvectCommon:
+    uf: wp.array3d(dtype=float)
+    vf: wp.array3d(dtype=float)
+    wf: wp.array3d(dtype=float)
+    dt: float
+    h: float
+
+@wp.struct 
+class AdvectFieldSpec:
+    qf: wp.array3d(dtype=float)
+    new_qf: wp.array3d(dtype=float)
+    stagger: wp.vec3
 
 @wp.func
 def in_bound(p: float, res: int):
@@ -59,64 +73,48 @@ def advect_phi(
         new_phi[i, j, k] = h0
 
 
-def advect_3d(uf, vf, wf, qf, new_uf, new_vf, new_wf, new_qf, h = h0):    
-    advect_mc(qf, new_qf, uf, vf, wf, dt, h)
-    advect_uv_mc(uf, vf, wf, new_uf, new_vf, new_wf, dt, h)
-
 @wp.kernel
 def _advect_mc_1(
-    uf: wp.array3d(dtype = float),
-    vf: wp.array3d(dtype = float),
-    wf: wp.array3d(dtype = float),
-    q_in: wp.array3d(dtype = float),
-    q_out: wp.array3d(dtype = float),
-    q_tmp: wp.array3d(dtype = float),
-    dt: float, h: float, stagger: wp.vec3
+    args_common: AdvectCommon,
+    args_spec: AdvectFieldSpec,
+    q_tmp: wp.array3d(dtype = float)
 ):
     i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j), float(k)) + stagger
-    p1 = backtrace(uf, vf, wf, p, dt, h)
-    q_out[i, j, k] = trilerp_stagger(q_in, p1, stagger)
+    p = wp.vec3(float(i), float(j), float(k)) + args_spec.stagger
+    p1 = backtrace(args_common.uf, args_common.vf, args_common.wf, p, args_common.dt, args_common.h)
+    args_spec.new_qf[i, j, k] = trilerp_stagger(args_spec.qf, p1, args_spec.stagger)
 
 @wp.kernel
 def _advect_mc_2(
-    uf: wp.array3d(dtype = float),
-    vf: wp.array3d(dtype = float),
-    wf: wp.array3d(dtype = float),
-    q_in: wp.array3d(dtype = float),
-    q_out: wp.array3d(dtype = float),
-    q_tmp: wp.array3d(dtype = float),
-    dt: float, h: float, stagger: wp.vec3
+    args_common: AdvectCommon,
+    args_spec: AdvectFieldSpec,
+    q_tmp: wp.array3d(dtype = float)
 ):
     i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j), float(k)) + stagger
+    p = wp.vec3(float(i), float(j), float(k)) + args_spec.stagger
     
-    p2 = backtrace(uf, vf, wf, p, -dt, h)
-    q_tmp[i, j, k] = trilerp_stagger(q_out, p2, stagger)
+    p2 = backtrace(args_common.uf, args_common.vf, args_common.wf, p, -args_common.dt, args_common.h)
+    q_tmp[i, j, k] = trilerp_stagger(args_spec.new_qf, p2, args_spec.stagger)
     
 
 @wp.kernel
 def _advect_mc_3(
-    uf: wp.array3d(dtype = float),
-    vf: wp.array3d(dtype = float),
-    wf: wp.array3d(dtype = float),
-    q_in: wp.array3d(dtype = float),
-    q_out: wp.array3d(dtype = float),
+    args_common: AdvectCommon,
+    args_spec: AdvectFieldSpec,
     q_tmp: wp.array3d(dtype = float),
-    dt: float, h: float, stagger: wp.vec3
 ):
     i, j, k = wp.tid()
-    p = wp.vec3(float(i), float(j), float(k)) + stagger
+    p = wp.vec3(float(i), float(j), float(k)) + args_spec.stagger
 
-    p3 = backtrace(uf, vf, wf, p, dt, h)
-    q_sl = trilerp_stagger(q_in, p3, stagger)
+    p3 = backtrace(args_common.uf, args_common.vf, args_common.wf, p, args_common.dt, args_common.h)
+    q_sl = trilerp_stagger(args_spec.qf, p3, args_spec.stagger)
     
-    q_out[i, j, k] = q_out[i, j, k] + 0.5 * (q_in[i, j, k] - q_tmp[i, j, k])
+    args_spec.new_qf[i, j, k] = args_spec.new_qf[i, j, k] + 0.5 * (args_spec.qf[i, j, k] - q_tmp[i, j, k])
 
-    min_val, max_val = sample_minmax(q_in, p3, h, stagger)
-    cond = min_val < q_out[i, j, k] and q_out[i, j, k] < max_val
+    min_val, max_val = sample_minmax(args_spec.qf, p3, args_common.h, args_spec.stagger)
+    cond = min_val < args_spec.new_qf[i, j, k] and args_spec.new_qf[i, j, k] < max_val
     if not cond:
-        q_out[i, j, k] = q_sl
+        args_spec.new_qf[i, j, k] = q_sl
 
 @wp.func
 def sample_minmax(q_in: wp.array3d(dtype = float), p: wp.vec3, h: float, stagger: wp.vec3):
@@ -139,56 +137,58 @@ def sample_minmax(q_in: wp.array3d(dtype = float), p: wp.vec3, h: float, stagger
 
     return min_val, max_val
 
-    
-def advect_mc(q_in, q_out, uf, vf, wf, dt = dt, h = h0):
-    q_tmp = wp.empty_like(q_in)
-    stagger = wp.vec3(0.5, 0.5, 0.5)
-    wp.launch(_advect_mc_1, dim = q_in.shape, inputs = [uf, vf, wf, q_in, q_out, q_tmp, dt, h, stagger])
-    wp.launch(_advect_mc_2, dim = q_in.shape, inputs = [uf, vf, wf, q_in, q_out, q_tmp, dt, h, stagger])
-    wp.launch(_advect_mc_3, dim = q_in.shape, inputs = [uf, vf, wf, q_in, q_out, q_tmp, dt, h, stagger])
+def advect_mc(args_common: AdvectCommon, args_spec: AdvectFieldSpec):
+    q_tmp = wp.empty_like(args_spec.qf)
+    wp.launch(_advect_mc_1, dim = args_spec.qf.shape, inputs = [args_common, args_spec, q_tmp])
+    wp.launch(_advect_mc_2, dim = args_spec.qf.shape, inputs = [args_common, args_spec, q_tmp])
+    wp.launch(_advect_mc_3, dim = args_spec.qf.shape, inputs = [args_common, args_spec, q_tmp])
 
 def advect_uv_mc(u_in, v_in, w_in, u_out, v_out, w_out, dt = dt, h = h0):
-    u_tmp = wp.empty_like(u_in)
-    v_tmp = wp.empty_like(v_in)
-    w_tmp = wp.empty_like(w_in)
+    common = AdvectCommon()
+    common.uf = u_in
+    common.vf = v_in
+    common.wf = w_in
+    common.dt = dt
+    common.h = h
+    
 
     ust = wp.vec3(0.0, 0.5, 0.5)
     vst = wp.vec3(0.5, 0.0, 0.5)
     wst = wp.vec3(0.5, 0.5, 0.0)
 
-    wp.launch(_advect_mc_1, dim = u_in.shape, inputs = [u_in, v_in, w_in, u_in, u_out, u_tmp, dt, h, ust])
-    wp.launch(_advect_mc_2, dim = u_in.shape, inputs = [u_in, v_in, w_in, u_in, u_out, u_tmp, dt, h, ust])
-    wp.launch(_advect_mc_3, dim = u_in.shape, inputs = [u_in, v_in, w_in, u_in, u_out, u_tmp, dt, h, ust])
-
-
-    wp.launch(_advect_mc_1, dim = v_in.shape, inputs = [u_in, v_in, w_in, v_in, v_out, v_tmp, dt, h, vst])
-    wp.launch(_advect_mc_2, dim = v_in.shape, inputs = [u_in, v_in, w_in, v_in, v_out, v_tmp, dt, h, vst])
-    wp.launch(_advect_mc_3, dim = v_in.shape, inputs = [u_in, v_in, w_in, v_in, v_out, v_tmp, dt, h, vst])
-
-    wp.launch(_advect_mc_1, dim = w_in.shape, inputs = [u_in, v_in, w_in, w_in, w_out, w_tmp, dt, h, wst])
-    wp.launch(_advect_mc_2, dim = w_in.shape, inputs = [u_in, v_in, w_in, w_in, w_out, w_tmp, dt, h, wst])
-    wp.launch(_advect_mc_3, dim = w_in.shape, inputs = [u_in, v_in, w_in, w_in, w_out, w_tmp, dt, h, wst])
-
+    specu = AdvectFieldSpec()
+    specu.qf = u_in
+    specu.new_qf = u_out
+    specu.stagger = ust
     
-    
+    specv = AdvectFieldSpec()
+    specv.qf = v_in
+    specv.new_qf = v_out
+    specv.stagger = vst
 
-@wp.func
-def is_interior(
-    p: wp.vec3,
-    q: wp.array3d(dtype = float)
-):
-    if p[0] < 0.5 or p[0] > float(q.shape[0]) - 0.5 or p[1] < 0.5 or p[1] > float(q.shape[1]) - 0.5 or p[2] < 0.5 or p[2] > float(q.shape[2]) - 0.5:
-        return False
-    else:
-        return True
+    specw = AdvectFieldSpec()
+    specw.qf = w_in
+    specw.new_qf = w_out
+    specw.stagger = wst
 
-@wp.func
-def is_interior_uvw(
-    p: wp.vec3,
-    q: int
-):
-    if p[0] < 1.0 or p[0] > float(q) - 1.0 or p[1] < 1.0 or p[1] > float(q) - 1.0 or p[2] < 1.0 or p[2] > float(q) - 1.0:
-        return False
-    else:
-        return True
+    advect_mc(common, specu)
+    advect_mc(common, specv)
+    advect_mc(common, specw)
 
+
+def advect_3d(uf, vf, wf, qf, new_uf, new_vf, new_wf, new_qf, h = h0):    
+    midst = wp.vec3(0.5, 0.5, 0.5)
+    common = AdvectCommon()
+    common.uf = uf
+    common.vf = vf
+    common.wf = wf
+    common.dt = dt
+    common.h = h
+
+    spec = AdvectFieldSpec()
+    spec.qf = qf
+    spec.new_qf = new_qf
+    spec.stagger = midst
+
+    advect_mc(common, spec)
+    advect_uv_mc(uf, vf, wf, new_uf, new_vf, new_wf, dt, h)

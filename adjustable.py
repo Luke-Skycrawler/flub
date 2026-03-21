@@ -33,7 +33,7 @@ def set_phi_3d(
 
     p = wp.vec3((float(i) + 0.5) * h, (float(j) + 0.5) * h, (float(k) + 0.5) * h) + wp.vec3(l, b, f)
 
-    r_and_center = wp.vec3(0.5, wl / 2.0, 0.5)
+    r_and_center = wp.vec3(0.25, wl / 2.0, 0.5)
     p -= r_and_center
     phi[i, j, k] = _sdf_cube(p, r_and_center, wp.quat_identity()) - 0.01
 
