@@ -172,9 +172,8 @@ def sdf_argmin_prims(
 @wp.func
 def to01(
     i: int, j: int, k: int, 
-    x_offset: float, y_offset: float, z_offset: float,
     h: float):
-    return float(i) * h + x_offset, float(j) * h + y_offset, float(k) * h + z_offset
+    return float(i) * h, float(j) * h, float(k) * h
 
 
 @wp.kernel
@@ -219,7 +218,7 @@ def precompute_grid_point_phi(
     x_offset: float, y_offset: float, z_offset: float, h: float, include_static: int
 ):
     i, j, k = wp.tid()
-    u, v, w = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    u, v, w = to01(i, j, k, h)
     y, tag = sdf_argmin_3d(u, v, w, x, q, geometry, include_static)
     phi[i, j, k] = y
 
@@ -227,12 +226,10 @@ def precompute_grid_point_phi(
 def precompute_grid_point_phi_prims(
     phi: wp.array3d(dtype = float), owner: wp.array3d(dtype = int),
     x: wp.array1d(dtype = wp.vec3), q: wp.array1d(dtype = wp.quat), 
-    geometry: wp.array1d(dtype = GeometryType3D), 
-    x_offset: float, y_offset: float, z_offset: float, h: float,
-    stagger: wp.vec3
+    geometry: wp.array1d(dtype = GeometryType3D), stagger: wp.vec3
 ):
     i, j, k = wp.tid()
-    u, v, w = to01(i, j, k, x_offset, y_offset, z_offset, h) 
+    u, v, w = to01(i, j, k, h) 
     u += stagger[0] * h
     v += stagger[1] * h
     w += stagger[2] * h
@@ -259,7 +256,7 @@ def _precompute_fij_u_3d_cached(
     yc = phi[i, j + 1, k + 1]
     yd = phi[i, j, k + 1]
 
-    (ua, va, wa) = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    (ua, va, wa) = to01(i, j, k, h)
     (y_center, tag_center) = sdf_argmin_3d(ua, va + 0.5 * h, wa + 0.5 * h, x, q, geometry, include_static)
     fuf[i, j, k] = fraction_quad(ya, yb, yc, yd, y_center)
     owneru[i, j, k] = tag_center
@@ -267,7 +264,7 @@ def _precompute_fij_u_3d_cached(
 @wp.kernel
 def phi_to_fraction(
     phi: wp.array3d(dtype = float),
-    fuf: wp.array3d(dtype = float),
+    frac: MACGrid,
     dim: int
 ):
     '''3d face fraction kernel for u component'''
@@ -279,16 +276,16 @@ def phi_to_fraction(
     yc = phi[i, j + 1, k + 1]
     yd = phi[i, j, k + 1]
 
-    if dim == 1: 
+    if dim == 2: 
         yb = phi[i + 1, j, k]
         yc = phi[i + 1, j, k + 1]
         yd = phi[i, j, k + 1]
-    elif dim == 2:
+    elif dim == 3:
         yb = phi[i + 1, j, k]
         yc = phi[i + 1, j + 1, k]
         yd = phi[i, j + 1, k]
 
-
+    fuf = get_uf(frac, dim).f
     y_center = fuf[i, j, k]
     fuf[i, j, k] = fraction_quad(ya, yb, yc, yd, y_center)
 
@@ -303,7 +300,7 @@ def _precompute_fij_v_3d_cached(
 ):
     '''3d face fraction kernel for v component'''
     i, j, k = wp.tid()
-    (ua, va, wa) = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    (ua, va, wa) = to01(i, j, k, h)
 
     ya = phi[i, j, k]
     yb = phi[i + 1, j, k]
@@ -325,7 +322,7 @@ def _precompute_fij_w_3d_cached(
 ):
     '''3d face fraction kernel for w component'''
     i, j, k = wp.tid()
-    (ua, va, wa) = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    (ua, va, wa) = to01(i, j, k, h)
     ya = phi[i, j, k]
     yb = phi[i + 1, j, k]
     yc = phi[i + 1, j + 1, k]
@@ -356,7 +353,7 @@ def _precompute_tag(
     l: float, b: float, f: float, h: float
 ):
     i, j, k = wp.tid()
-    u, v, w = to01(i, j, k, l, b, f, h)
+    u, v, w = to01(i, j, k, h)
     u += 0.5 * h
     v += 0.5 * h
     w += 0.5 * h
@@ -371,13 +368,13 @@ def update_argmin(
     owner: wp.array3d(dtype = int),
     levelset: wp.array3d(dtype = float),
     id: int, x: wp.vec3, q: wp.quat,
-    x_offset: float, y_offset: float, z_offset: float, h: float, h_levelset: float,
+    h_levelset: float,
     stagger: wp.vec3,
     ijk: wp.vec3
 ):
     '''update phi with resampled levelset'''
     i, j, k = wp.tid()
-    px, py, pz = to01(i, j, k, x_offset, y_offset, z_offset, h)
+    px, py, pz = to01(i, j, k, h)
     p = wp.vec3(px, py, pz) + stagger * h
 
 
@@ -392,12 +389,12 @@ def update_argmin(
 
 @wp.kernel
 def _tag_neumann(
-    tag: wp.array3d(dtype = int),
-    phi: wp.array3d(dtype = float)
+    tag: IntField,
+    phi: Field
 ):
     i, j, k = wp.tid()
-    if phi[i, j, k] < 0.0:
-        tag[i, j, k] = 2
+    if phi.f[i, j, k] < 0.0:
+        tag.f[i, j, k] = 2
 
 
 
@@ -410,18 +407,19 @@ class PrecomputeFaceFraction:
     def tag_dirichlet(self, tag, phi):
         wp.launch(_tag_dirichlet, dim = phi.shape, inputs = [tag, phi])
 
-    def tag_neumann(self, tag, phi):
-        wp.launch(_tag_neumann, dim = phi.shape, inputs = [tag, phi])
+    def tag_neumann(self, tag: IntField, phi: Field):
+        wp.launch(_tag_neumann, dim = phi.f.shape, inputs = [tag, phi])
+
     def precompute_tag(self, tag, x, theta, geometry, include_static = 1, lbf = np.zeros(3, np.float32), h = h0):
         wp.launch(_precompute_tag, dim = tag.shape, inputs = [tag, x, theta, geometry, include_static, lbf[0], lbf[1], lbf[2], h])
 
     
-    def precompute_phi_with_cached_levelset(self, phi, rc, x_offset, y_offset, z_offset, h, owner = None, stagger = wp.vec3(0.0, 0.0, 0.0)):        
+    def precompute_phi_with_cached_levelset(self, phi, rc, owner = None, stagger = wp.vec3(0.0, 0.0, 0.0)):        
         if owner is None:
             owner = wp.zeros((1, 1, 1), dtype = int)
 
         # handle simple geometry first (boxes, spheres, etc.)
-        wp.launch(precompute_grid_point_phi_prims, dim = phi.shape, inputs = [phi, owner, rc.x_pair.cur, rc.theta_pair.cur, rc.rigid_geometry, x_offset, y_offset, z_offset, h, stagger])
+        wp.launch(precompute_grid_point_phi_prims, dim = phi.shape, inputs = [phi, owner, rc.x_pair.cur, rc.theta_pair.cur, rc.rigid_geometry, stagger])
         # handle mesh
         xnp = rc.x_pair.cur.numpy()
         qnp = rc.theta_pair.cur.numpy()
@@ -432,9 +430,16 @@ class PrecomputeFaceFraction:
             _q = qnp[i]
             x = wp.vec3(_x[0], _x[1], _x[2]) 
             q = wp.quat(_q[0], _q[1], _q[2], _q[3])
-            wp.launch(update_argmin, dim = phi.shape, inputs = [phi, owner, levelset, i, x, q, x_offset, y_offset, z_offset, h, h_levelset, stagger, ijk])
+            wp.launch(update_argmin, dim = phi.shape, inputs = [phi, owner, levelset, i, x, q, h_levelset, stagger, ijk])
     
-    def precompute_fij_with_cache(self, fuf, fvf, fwf, owneru, ownerv, ownerw, rc, x_offset = 0.0, y_offset = 0.0, z_offset = 0.0, h = h0): 
+    def precompute_fij_with_cache(self, frac, vel_owner, rc): 
+        fuf = frac.u.f
+        fvf = frac.v.f
+        fwf = frac.w.f
+        owneru = vel_owner.u.f
+        ownerv = vel_owner.v.f
+        ownerw = vel_owner.w.f
+        
         ext_shape = (fuf.shape[0], fvf.shape[1], fwf.shape[2])
         phi_tmp = wp.empty(ext_shape, dtype = float)
 
@@ -444,17 +449,17 @@ class PrecomputeFaceFraction:
         staggerw = wp.vec3(0.5, 0.5, 0.0)
         
         # grid points 
-        self.precompute_phi_with_cached_levelset(phi_tmp, rc, x_offset, y_offset, z_offset, h)
+        self.precompute_phi_with_cached_levelset(phi_tmp, rc)
         # u, v, w face center
-        self.precompute_phi_with_cached_levelset(fuf, rc, x_offset, y_offset, z_offset, h, owneru, staggeru)
-        self.precompute_phi_with_cached_levelset(fvf, rc, x_offset, y_offset, z_offset, h, ownerv, staggerv)
-        self.precompute_phi_with_cached_levelset(fwf, rc, x_offset, y_offset, z_offset, h, ownerw, staggerw)
+        self.precompute_phi_with_cached_levelset(fuf, rc, owneru, stagger = staggeru)
+        self.precompute_phi_with_cached_levelset(fvf, rc, ownerv, stagger = staggerv)
+        self.precompute_phi_with_cached_levelset(fwf, rc, ownerw, stagger = staggerw)
 
 
         
-        wp.launch(phi_to_fraction, dim = fuf.shape, inputs = [phi_tmp, fuf, 0])
-        wp.launch(phi_to_fraction, dim = fvf.shape, inputs = [phi_tmp, fvf, 1])
-        wp.launch(phi_to_fraction, dim = fwf.shape, inputs = [phi_tmp, fwf, 2])
+        wp.launch(phi_to_fraction, dim = shapeu, inputs = [phi_tmp, frac, 1])
+        wp.launch(phi_to_fraction, dim = shapev, inputs = [phi_tmp, frac, 2])
+        wp.launch(phi_to_fraction, dim = shapew, inputs = [phi_tmp, frac, 3])
 
     def precompute_fij_3d_deprecated(self, fuf, fvf, fwf, x, q, geometry, owneru, ownerv, ownerw, x_offset, y_offset, z_offset, h, solid_wall_boundary = True, include_static = 1):
         '''

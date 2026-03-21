@@ -1,5 +1,5 @@
 import warp as wp
-from const_param import center_rigid, rotate, init_v0, h0, v_inflow, gridx, gridy, gridz, dt, gravity, config_file, use_scene, xtype, theta_type, omega_type, shape
+from const_param import center_rigid, rotate, init_v0, h0, v_inflow, gridx, gridy, gridz, dt, gravity, config_file, use_scene, xtype, theta_type, omega_type, shape, Field, MACGrid, IntField, MACGridInt, get_uf
 from geometry import sdf_argmin_3d, GeometryType3D
 from utils.util import TexPair, compute_v_solid_3d, is_cutcell_3d
 import numpy as np
@@ -138,64 +138,83 @@ def initialize_solid_3d(
         v[i] = wp.vec3(0.0, 0.0, 0.0)
 
 
+# @wp.kernel
+# def _precompute_solid_vel_u_3d(
+#         x: wp.array1d(dtype=wp.vec3),
+#         v: wp.array1d(dtype=wp.vec3),
+#         omega: wp.array1d(dtype=wp.vec3),
+#         u_rigid: wp.array3d(dtype=float),
+#         u_owner: wp.array3d(dtype=int)):
+
+#     eps = h0 * 0.01
+#     i, j, k = wp.tid()
+#     owner = u_owner[i, j, k]
+#     tmp = float(i) * h0
+#     if eps < tmp and tmp < 1.0 - eps and owner != -1:
+#         pos = wp.vec3(float(i) * h0, (float(j) + 0.5) * h0, (float(k) + 0.5) * h0)
+#         u_rigid[i, j, k] = compute_v_solid_3d(
+#             pos, x[owner], v[owner], omega[owner])[0]
+#     else:
+#         u_rigid[i, j, k] = v_inflow
+#         # u_rigid[i, j, k] = 0.0
+
 @wp.kernel
-def _precompute_solid_vel_u_3d(
+def precompute_solid_vel(
         x: wp.array1d(dtype=wp.vec3),
         v: wp.array1d(dtype=wp.vec3),
         omega: wp.array1d(dtype=wp.vec3),
-        u_rigid: wp.array3d(dtype=float),
-        u_owner: wp.array3d(dtype=int),
-        l: float, b: float, f: float, h: float):
+        vel_rigid: MACGrid,
+        vel_owner: MACGridInt,
+        d: int):
 
     eps = h0 * 0.01
     i, j, k = wp.tid()
-    owner = u_owner[i, j, k]
-    tmp = float(i) * h + l
+    u_rigid = get_uf(vel_rigid, d)
+    owner = get_uf(vel_owner, d).f[i, j, k]
+    tmp = float(i) * h0
     if eps < tmp and tmp < 1.0 - eps and owner != -1:
-        pos = wp.vec3(l + float(i) * h, b + (float(j) + 0.5) * h, f + (float(k) + 0.5) * h)
-        u_rigid[i, j, k] = compute_v_solid_3d(
-            pos, x[owner], v[owner], omega[owner])[0]
+        # pos = wp.vec3(float(i) * h0, (float(j) + 0.5) * h0, (float(k) + 0.5) * h0)
+        pos = (wp.vec3(float(i), float(j), float(k)) + u_rigid.stagger) * h0
+        u_rigid.f[i, j, k] = compute_v_solid_3d(pos, x[owner], v[owner], omega[owner])[d - 1]
     else:
-        u_rigid[i, j, k] = v_inflow
-        # u_rigid[i, j, k] = 0.0
+        u_rigid.f[i, j, k] = 0.0
 
-
-@wp.kernel
-def _precompute_solid_vel_v_3d(
-        x: wp.array1d(dtype=wp.vec3),
-        v: wp.array1d(dtype=wp.vec3),
-        omega: wp.array1d(dtype=wp.vec3),
-        v_rigid: wp.array3d(dtype=float),
-        v_owner: wp.array3d(dtype=int),
-        l: float, b: float, f: float, h: float):
-    eps = h0 * 0.01
-    i, j, k = wp.tid()
-    owner = v_owner[i, j, k]
-    tmp = float(j) * h + b
-    if eps < tmp and tmp < h0 * float(gridy) - eps and owner != -1:
-        pos = wp.vec3(l + (float(i) + 0.5) * h, b + float(j) * h, f + (float(k) + 0.5) * h)
-        v_rigid[i, j, k] = compute_v_solid_3d(
-            pos, x[owner], v[owner], omega[owner])[1]
-    else:
-        v_rigid[i, j, k] = 0.0
-@wp.kernel
-def _precompute_solid_vel_w_3d(
-        x: wp.array1d(dtype=wp.vec3),
-        v: wp.array1d(dtype=wp.vec3),
-        omega: wp.array1d(dtype=wp.vec3),
-        w_rigid: wp.array3d(dtype=float),
-        w_owner: wp.array3d(dtype=int),
-        l: float, b: float, f: float, h: float):
-    eps = h0 * 0.01
-    i, j, k = wp.tid()
-    owner = w_owner[i, j, k]
-    tmp = float(k) * h + f
-    if eps < tmp and tmp < h0 * float(gridz) - eps and owner != -1:
-        pos = wp.vec3(l + (float(i) + 0.5) * h, b + (float(j) + 0.5) * h, f + float(k) * h)
-        w_rigid[i, j, k] = compute_v_solid_3d(
-            pos, x[owner], v[owner], omega[owner])[2]
-    else:
-        w_rigid[i, j, k] = 0.0
+# @wp.kernel
+# def _precompute_solid_vel_v_3d(
+#         x: wp.array1d(dtype=wp.vec3),
+#         v: wp.array1d(dtype=wp.vec3),
+#         omega: wp.array1d(dtype=wp.vec3),
+#         v_rigid: wp.array3d(dtype=float),
+#         v_owner: wp.array3d(dtype=int),
+#         l: float, b: float, f: float, h: float):
+#     eps = h0 * 0.01
+#     i, j, k = wp.tid()
+#     owner = v_owner[i, j, k]
+#     tmp = float(j) * h0 + b
+#     if eps < tmp and tmp < h0 * float(gridy) - eps and owner != -1:
+#         pos = wp.vec3(l + (float(i) + 0.5) * h, b + float(j) * h, f + (float(k) + 0.5) * h)
+#         v_rigid[i, j, k] = compute_v_solid_3d(
+#             pos, x[owner], v[owner], omega[owner])[1]
+#     else:
+#         v_rigid[i, j, k] = 0.0
+# @wp.kernel
+# def _precompute_solid_vel_w_3d(
+#         x: wp.array1d(dtype=wp.vec3),
+#         v: wp.array1d(dtype=wp.vec3),
+#         omega: wp.array1d(dtype=wp.vec3),
+#         w_rigid: wp.array3d(dtype=float),
+#         w_owner: wp.array3d(dtype=int),
+#         l: float, b: float, f: float, h: float):
+#     eps = h0 * 0.01
+#     i, j, k = wp.tid()
+#     owner = w_owner[i, j, k]
+#     tmp = float(k) * h + f
+#     if eps < tmp and tmp < h0 * float(gridz) - eps and owner != -1:
+#         pos = wp.vec3(l + (float(i) + 0.5) * h, b + (float(j) + 0.5) * h, f + float(k) * h)
+#         w_rigid[i, j, k] = compute_v_solid_3d(
+#             pos, x[owner], v[owner], omega[owner])[2]
+#     else:
+#         w_rigid[i, j, k] = 0.0
 
 
 @wp.kernel
@@ -464,10 +483,10 @@ class RigidCoupling:
             pass
 
 
-    def precompute_solid_vel_3d(self, x, theta, v, omega, geometry, u_rigid, v_rigid, w_rigid, u_owner, v_owner, w_owner, l = 0.0, b = 0.0, f = 0.0, h= h0):
-        wp.launch(_precompute_solid_vel_u_3d, dim = u_rigid.shape, inputs = [x, v, omega, u_rigid, u_owner, l, b, f, h])
-        wp.launch(_precompute_solid_vel_v_3d, dim = v_rigid.shape, inputs = [x, v, omega, v_rigid, v_owner, l, b, f, h])
-        wp.launch(_precompute_solid_vel_w_3d, dim = w_rigid.shape, inputs = [x, v, omega, w_rigid, w_owner, l, b, f, h])
+    def precompute_solid_vel_3d(self, x, theta, v, omega, geometry, vel_rigid, vel_owner):
+        wp.launch(precompute_solid_vel, dim = vel_rigid.u.f.shape, inputs = [x, v, omega, vel_rigid, vel_owner, 1])
+        wp.launch(precompute_solid_vel, dim = vel_rigid.v.f.shape, inputs = [x, v, omega, vel_rigid, vel_owner, 2])
+        wp.launch(precompute_solid_vel, dim = vel_rigid.w.f.shape, inputs = [x, v, omega, vel_rigid, vel_owner, 3])
 
 
     def compute_rigid_phi(self, phi, lbf = np.zeros(3), h = h0, include_static = 1):

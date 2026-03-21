@@ -160,9 +160,9 @@ def _tricubic(qf: wp.array3d(dtype =float), s: float, t: float, r: float):
     
 
 @wp.kernel
-def scale_by_3d(qf: wp.array3d(dtype=float), scale: float):
+def scale_by_3d(q: Field, scale: float):
     i, j, k = wp.tid()
-    qf[i, j, k] = qf[i, j, k] * scale
+    q.f[i, j, k] = q.f[i, j, k] * scale
 
 
 @wp.func

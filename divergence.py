@@ -1,5 +1,6 @@
 import warp as wp
 from utils.util import sample_3d
+from const_param import Field, MACGrid, IntField
 @wp.kernel
 def divergence_fractional_3d(
     uf: wp.array3d(dtype = float), 
@@ -41,18 +42,21 @@ def divergence_fractional_3d(
             1.0 - r) * vrs - (1.0 - l) * vls + (1.0 - t) * vts - (1.0 - b) * vbs + (1.0 - n) * vns - (1.0 - f) * vfs)
 @wp.kernel
 def divergence_tag(
-    uf: wp.array3d(dtype = float), 
-    vf: wp.array3d(dtype = float), 
-    wf: wp.array3d(dtype = float),
-    velocity_divs: wp.array3d(dtype = float), 
-    u_rigid: wp.array3d(dtype = float), 
-    v_rigid: wp.array3d(dtype = float),
-    w_rigid: wp.array3d(dtype = float),
-    tag: wp.array3d(dtype = int)):
+    vels: MACGrid, 
+    velocity_divs: Field, 
+    vel_rigid: MACGrid, 
+    tag: IntField):
     '''3d divergence kernel'''
 
-    res = tag.shape[0]
+    res = tag.f.shape[0]
     i, j, k = wp.tid()
+
+    uf = vels.u.f
+    vf = vels.v.f
+    wf = vels.w.f
+    u_rigid = vel_rigid.u.f 
+    v_rigid = vel_rigid.v.f
+    w_rigid = vel_rigid.w.f
     
     vl = sample_3d(uf, i, j, k)
     vr = sample_3d(uf, i + 1, j, k)
@@ -64,35 +68,36 @@ def divergence_tag(
 
     if i == 0:
         vl = 0.0
-    elif tag[i - 1, j, k] == 2:
+    elif tag.f[i - 1, j, k] == 2:
         vl = u_rigid[i, j, k]
     
     if i == res -1:
         vr = 0.0
-    elif tag[i + 1, j, k] == 2:
+    elif tag.f[i + 1, j, k] == 2:
         vr = u_rigid[i + 1, j, k]
 
     if j == 0:
         vb = 0.0
-    elif tag[i, j - 1, k] == 2:
+    elif tag.f[i, j - 1, k] == 2:
         vb = v_rigid[i, j, k]
     
     if j == res - 1:
         vt = 0.0
-    elif tag[i, j + 1, k] == 2:
+    elif tag.f[i, j + 1, k] == 2:
         vt = v_rigid[i, j + 1, k]
     
     if k == 0:
         _vf = 0.0
-    elif tag[i, j, k - 1] == 2:
+    elif tag.f[i, j, k - 1] == 2:
         _vf = w_rigid[i, j, k]
     
     if k == res - 1:
         _vn = 0.0
-    elif tag[i, j, k + 1] == 2:
+    elif tag.f[i, j, k + 1] == 2:
         _vn = w_rigid[i, j, k + 1]
     
-    velocity_divs[i, j, k] = (vr - vl + vt - vb + _vn - _vf)
+    velocity_divs.f[i, j, k] = (vr - vl + vt - vb + _vn - _vf)
+
 @wp.kernel
 def divergence_tag_open(
     uf: wp.array3d(dtype = float), 
@@ -167,10 +172,10 @@ def invalidate(
 
 @wp.kernel
 def mask_with_tag(
-    div: wp.array3d(dtype = float),
-    tag: wp.array3d(dtype = int)    
+    div: Field,
+    tag: IntField 
 ):
     i, j, k = wp.tid()  
-    if tag[i, j, k] != 1:
-        div[i, j, k] = 0.0
+    if tag.f[i, j, k] != 1:
+        div.f[i, j, k] = 0.0
 

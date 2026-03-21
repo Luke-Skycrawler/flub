@@ -13,7 +13,7 @@ class PSViewer:
         self.fluids = fluids
         self.render()
         self.frame = 0
-        self.ui_pause = True
+        self.ui_pause = False
         self.animate = False
         
         self.end_frame = 5000

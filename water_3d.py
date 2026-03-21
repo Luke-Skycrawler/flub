@@ -1,7 +1,7 @@
 from const_param import *
 from example_fluid import Example
 from advect import advect_phi, advect_uv_mc
-from subtract_gradient import u_subtract_gradient_batty_3d, v_subtract_gradient_batty_3d, w_subtract_gradient_batty_3d, u_subtract_gradient_tag, v_subtract_gradient_tag, w_subtract_gradient_tag
+from subtract_gradient import u_subtract_gradient_batty_3d, v_subtract_gradient_batty_3d, w_subtract_gradient_batty_3d, subtract_gradient_tag
 from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, exclude_rigid_phi, set_unknown_3d
 from adjustable import integrate_3d, set_phi_3d
 from extrapolate import extrapolate_by_1
@@ -133,9 +133,9 @@ class WaterExample3d(Example):
         wp.launch(scale_by_3d, dim = shape, inputs = [self.p0, 1.0 / h0])
         # velocity update
         if use_mgpcg:
-            wp.launch(u_subtract_gradient_tag, dim = shapeu, inputs = [self.u0, self.u_rigid, self.p0, self.tag, 0.0, 0.0, h0])
-            wp.launch(v_subtract_gradient_tag, dim = shapev, inputs = [self.v0, self.v_rigid, self.p0, self.tag, 0.0, 0.0, h0])
-            wp.launch(w_subtract_gradient_tag, dim = shapew, inputs = [self.w0, self.w_rigid, self.p0, self.tag, 0.0, 0.0, h0])
+            wp.launch(subtract_gradient_tag, dim = shapeu, inputs = [self.u0, self.u_rigid, self.p0, self.tag, 0.0, 0.0, h0])
+            wp.launch(subtract_gradient_tag, dim = shapev, inputs = [self.v0, self.v_rigid, self.p0, self.tag, 0.0, 0.0, h0])
+            wp.launch(subtract_gradient_tag, dim = shapew, inputs = [self.w0, self.w_rigid, self.p0, self.tag, 0.0, 0.0, h0])
         else:
             wp.launch(u_subtract_gradient_batty_3d, dim = shapeu, inputs = [self.u0, self.p0, self.fu, self.phi_rigid, self.u_rigid, 0.0, 0.0, h0])
             wp.launch(v_subtract_gradient_batty_3d, dim = shapev, inputs = [self.v0, self.p0, self.fv, self.phi_rigid, self.v_rigid, 0.0, 0.0, h0])

@@ -3,8 +3,7 @@ import numpy as np
 
 from multigrid.mgpcg import MGPCG
 from divergence import divergence_tag, mask_with_tag
-from subtract_gradient import u_subtract_gradient_fractioned_3d, v_subtract_gradient_fractioned_3d, w_subtract_gradient_fractioned_3d, \
-    u_subtract_gradient_tag, v_subtract_gradient_tag, w_subtract_gradient_tag
+from subtract_gradient import subtract_gradient_tag
 from const_param import *
 from utils.util import scale_by_3d, TexPair
 
@@ -25,44 +24,13 @@ class Example:
         self.device = wp.get_device()
         self.patch_focused = 0
 
-        self.v0 = wp.zeros(shapev, dtype=float)
-        self.v1 = wp.zeros(shapev, dtype=float)
-        self.u0 = wp.zeros(shapeu, dtype=float)
-        self.u1 = wp.zeros(shapeu, dtype=float)
-        self.w0 = wp.zeros(shapew, dtype=float)
-        self.w1 = wp.zeros(shapew, dtype=float)
-
-        self.rho0 = wp.zeros(shape, dtype=float)
-        self.rho1 = wp.zeros(shape, dtype=float)
-
-        self.p0 = wp.zeros(shape, dtype=float)
-        self.p1 = wp.zeros(shape, dtype=float)
-        self.div = wp.zeros(shape, dtype=float)
-
-        self.q0 = self.rho0
-        self.q1 = self.rho1
-
-        self.fu = wp.zeros(shapeu, dtype = float)
-        self.fv = wp.zeros(shapev, dtype = float)
-        self.fw = wp.zeros(shapew, dtype = float)
-
-        self.u_rigid = wp.zeros(shapeu, dtype=float)
-        self.v_rigid = wp.zeros(shapev, dtype=float)
-        self.w_rigid = wp.zeros(shapew, dtype=float)
+        self.vel0, self.vel1, self.frac, self.vel_rigid = (make_mac_grid() for _ in range(4))
+        self.vel_owner = make_mac_grid(dtype = int)
         
-        self.u_owner = wp.zeros(shapeu, dtype=int)
-        self.v_owner = wp.zeros(shapev, dtype=int)
-        self.w_owner = wp.zeros(shapew, dtype=int)
-
-        self.rhou = wp.zeros(shapeu, dtype = float)
-        self.rhov = wp.zeros(shapev, dtype = float)
-        self.rhow = wp.zeros(shapew, dtype = float)
-        self.tag = wp.zeros(shape, dtype = int)
-        self.tag_pc = wp.zeros(shape, dtype = int)
-        self.phi_rigid = wp.zeros(shape, dtype = float)
-
-        
-        self.p_pair = TexPair(self.p0, self.p1)
+        self.q0, self.q1, self.p0, self.p1, self.div, self.phi_rigid = (make_field(0) for _ in range(6))
+        self.tag = make_field(0, dtype = int)
+        self.centered_fields = [self.q0, self.q1, self.p0, self.p1, self.div, self.phi_rigid, self.tag]
+        self.mac_fields = [self.vel0, self.vel1, self.frac, self.vel_rigid, self.vel_owner]
 
         self.rc = RigidCoupling()
         self.pff = PrecomputeFaceFraction(use_mesh = False)
@@ -75,33 +43,33 @@ class Example:
         self.mc = wp.MarchingCubes(gridx, gridy, gridz, self.max_verts, self.max_tris)
         
         self.reset()
-
-    def call_mgpcg(self, pf, smoother = "fraction"):
-        self.mgpcg.set_tags(self.tag)
-        self.mgpcg.init(self.div, -h0)
+        
+    def call_mgpcg(self, pf: Field, smoother = "fraction"):
+        self.mgpcg.set_tags(self.tag.f)
+        self.mgpcg.init(self.div.f, -h0)
         self.mgpcg.mask_interior()
         self.mgpcg.solve(4, verbose = True, smoother = smoother)
-        wp.copy(pf, self.mgpcg.x)
+        wp.copy(pf.f, self.mgpcg.x)
         wp.launch(scale_by_3d, dim = shape, inputs = [pf, h0])
 
     def reset(self):
         self.frame = 0
         self.timing_results = gen_list()
         self.sim_time = 0.0
-        for field in [self.rho0, self.rho1, self.p0, self.p1, 
-                      self.u0, self.u1, self.v0, self.v1, self.w0, self.w1, 
-                      self.fu, self.fv, self.fw, self.div, self.tag]:
-            field.zero_()
+        for field in self.centered_fields:
+            field.f.zero_()
+        for field in self.mac_fields:
+            field.u.f.zero_()
+            field.v.f.zero_()
+            field.w.f.zero_()
 
         self.rc.reset()
 
     def advect(self):
-        advect_3d(self.u0, self.v0, self.w0, self.rho0, self.u1, self.v1, self.w1, self.rho1)
+        advect_3d(self.vel0, self.vel1, self.q0, self.q1)
 
-        (self.u0, self.u1) = (self.u1, self.u0)
-        (self.v0, self.v1) = (self.v1, self.v0)
-        (self.w0, self.w1) = (self.w1, self.w0)
-        (self.rho0, self.rho1) = (self.rho1, self.rho0)
+        (self.vel0, self.vel1) = (self.vel1, self.vel0)
+        self.q0, self.q1 = self.q1, self.q0
 
     def ext_forces(self):
         _src_pos = self.rc.scene.src_pos
@@ -111,21 +79,21 @@ class Example:
         vel = wp.vec3(_vel[0], _vel[1], _vel[2])
         if self.sim_time == 0.0 or (_vel != 0.0).any():
         # update emitters
-            wp.launch(init_3d, dim=shape, inputs=[self.rho0, self.u0, self.v0, self.w0, 5, vel, src_pos, h0, 0.0, 0.0, 0.0])
+            wp.launch(init_3d, dim=shape, inputs=[self.q0, self.vel0, vel, src_pos])
         
 
         # force integrate
-        wp.launch(integrate_3d, dim=shape, inputs=[self.v0, self.rho0, dt])
+        wp.launch(integrate_3d, dim=shape, inputs=[self.vel0, self.q0, dt])
 
     def divergence(self, rc: RigidCoupling):
-        rc.precompute_solid_vel_3d(rc.x_pair.cur, rc.theta_pair.cur, rc.v, rc.omega, rc.rigid_geometry, self.u_rigid, self.v_rigid, self.w_rigid, self.u_owner, self.v_owner, self.w_owner) 
+        rc.precompute_solid_vel_3d(rc.x_pair.cur, rc.theta_pair.cur, rc.v, rc.omega, rc.rigid_geometry, self.vel_rigid, self.vel_owner) 
         # wp.launch(divergence_fractional_3d, dim = shape, inputs = [self.u0, self.v0, self.w0, self.div, self.fu, self.fu, self.fw, self.u_rigid, self.v_rigid, self.w_rigid])
 
-        wp.launch(divergence_tag, dim = shape, inputs = [self.u0, self.v0, self.w0, self.div, self.u_rigid, self.v_rigid, self.w_rigid, self.tag])
+        wp.launch(divergence_tag, dim = shape, inputs = [self.vel0, self.div, self.vel_rigid, self.tag])
         wp.launch(mask_with_tag, dim = shape, inputs = [self.div, self.tag])
 
         wp.launch(scale_by_3d, dim = shape, inputs = [self.div, -1.0 / h])
-        print("L inf u div = ", np.max(self.div.numpy()))
+        print("L inf u div = ", np.max(self.div.f.numpy()))
  
     def rigid_swap(self, rc: RigidCoupling):
         pff = self.pff
@@ -139,12 +107,12 @@ class Example:
         # wp.launch(min_kernel, dim = shapeu, inputs= [self.fu, self.fu_static])
         # wp.launch(min_kernel, dim = shapev, inputs= [self.fv, self.fv_static])
         # wp.launch(min_kernel, dim = shapew, inputs= [self.fw, self.fw_static])
-        pff.precompute_fij_with_cache(self.fu, self.fv, self.fw, self.u_owner, self.v_owner, self.w_owner, rc, 0.0, 0.0, 0.0, h0)
+        pff.precompute_fij_with_cache(self.frac, self.vel_owner, rc)
 
-        self.tag.fill_(1)
+        self.tag.f.fill_(1)
         # self.pff.precompute_tag(self.tag, rc.x_pair.cur, rc.theta_pair.cur, rc.rigid_geometry)
-        self.phi_rigid.fill_(1.0)
-        pff.precompute_phi_with_cached_levelset(self.phi_rigid, rc, 0.0, 0.0, 0.0, h0, stagger = wp.vec3(0.5, 0.5, 0.5))
+        self.phi_rigid.f.fill_(1.0)
+        pff.precompute_phi_with_cached_levelset(self.phi_rigid.f, rc, stagger = wp.vec3(0.5, 0.5, 0.5))
         pff.tag_neumann(self.tag, self.phi_rigid)
 
 
@@ -155,25 +123,23 @@ class Example:
         self.divergence(rc)
             
         # pressure solve
-        self.p0.zero_()
-        self.p1.zero_()
+        self.p0.f.zero_()
+        self.p1.f.zero_()
 
         with wp.ScopedTimer("global project", active=timer_active, synchronize=True):
             if use_mgpcg:
                 self.call_mgpcg(self.p0)
-            else:
-                self.solve_multigrid_3d(self.mg_solver)
         
         wp.launch(scale_by_3d, dim = shape, inputs = [self.p0, 1.0 / h0])
         if use_mgpcg:
-            wp.launch(u_subtract_gradient_tag, dim = shapeu, inputs = [self.u0, self.u_rigid, self.p0, self.tag, 0.0, 0.0, h0])
-            wp.launch(v_subtract_gradient_tag, dim = shapev, inputs = [self.v0, self.v_rigid, self.p0, self.tag, 0.0, 0.0, h0])
-            wp.launch(w_subtract_gradient_tag, dim = shapew, inputs = [self.w0, self.w_rigid, self.p0, self.tag, 0.0, 0.0, h0])
-        else:
-            # velocity update
-            wp.launch(u_subtract_gradient_fractioned_3d, dim = shapeu, inputs = [self.u0, self.p0, self.fu, 0.0, 0.0, 0.0, h0])
-            wp.launch(v_subtract_gradient_fractioned_3d, dim = shapev, inputs = [self.v0, self.p0, self.fv, 0.0, 0.0, 0.0, h0])
-            wp.launch(w_subtract_gradient_fractioned_3d, dim = shapew, inputs = [self.w0, self.p0, self.fw, 0.0, 0.0, 0.0, h0])
+            wp.launch(subtract_gradient_tag, dim = shapeu, inputs = [self.vel0, self.vel_rigid, self.p0, self.tag, 1])
+            wp.launch(subtract_gradient_tag, dim = shapev, inputs = [self.vel0, self.vel_rigid, self.p0, self.tag, 2])
+            wp.launch(subtract_gradient_tag, dim = shapew, inputs = [self.vel0, self.vel_rigid, self.p0, self.tag, 3])
+        # else:
+        #     # velocity update
+        #     wp.launch(u_subtract_gradient_fractioned_3d, dim = shapeu, inputs = [self.u0, self.p0, self.fu, 0.0, 0.0, 0.0, h0])
+        #     wp.launch(v_subtract_gradient_fractioned_3d, dim = shapev, inputs = [self.v0, self.p0, self.fv, 0.0, 0.0, 0.0, h0])
+        #     wp.launch(w_subtract_gradient_fractioned_3d, dim = shapew, inputs = [self.w0, self.p0, self.fw, 0.0, 0.0, 0.0, h0])
 
         wp.launch(scale_by_3d, dim=shape, inputs=[self.p0, h0])
         print("after projection:")
@@ -204,10 +170,10 @@ class Example:
     def render(self, iso_value = 1e-2):
         v = np.zeros((0, 3), dtype = float)
         f = np.zeros((0, 3), dtype = int)
-        rnp = self.rho0.numpy()
+        rnp = self.q0.f.numpy()
         if np.max(rnp) > iso_value and np.min(rnp) < iso_value:
-            self.mc.surface(self.rho0, iso_value)
+            self.mc.surface(self.q0.f, iso_value)
             v = self.mc.verts.numpy().reshape(-1, 3)
             f = self.mc.indices.numpy().reshape(-1, 3)
-        return v, f
+        return v, f, None
         

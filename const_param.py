@@ -10,8 +10,8 @@ water_config = ["scenes/beach.json", "scenes/b2.json", "scenes/water_overload.js
 
 
 # config_file = "scenes/city.json"
-# config_file = "scenes/flow_pass_sphere.json"
-config_file = "scenes/dam_break.json"
+config_file = "scenes/flow_pass_sphere.json"
+# config_file = "scenes/dam_break.json"
 # config_file = "scenes/wake.json"
 # config_file = "scenes/empty.json"
 
@@ -33,7 +33,7 @@ res_digits = 7
 
 res = 256
 gridx = 256
-gridy = 64
+gridy = 256
 gridz = 256
 
 # res = 64
@@ -75,3 +75,76 @@ timer_active = True
 
 gen_list = lambda: [{} for _ in range(view_frames)]
 print_timing_stats = True
+
+from typing import Any
+@wp.struct
+class Field:
+    f: wp.array3d(dtype = float)
+    stagger: wp.vec3
+    d: int
+
+@wp.struct
+class IntField:
+    f: wp.array3d(dtype = int)
+    stagger: wp.vec3
+    d: int
+
+@wp.struct
+class MACGrid: 
+    u: Field
+    v: Field
+    w: Field
+
+@wp.struct
+class MACGridInt: 
+    u: IntField
+    v: IntField
+    w: IntField
+
+@wp.func 
+def get_uf(vels: Any, d: int):
+    '''
+    d = 1, 2, 3 for u, v, w respectively
+    '''
+    uf = wp.where(d == 1, vels.u, wp.where(d == 2, vels.v, vels.w))
+    return uf
+
+
+
+def make_field(dim, dtype = float): 
+    if dtype == float:
+        field = Field()
+    else: 
+        field = IntField()
+    field.d = dim
+    if dim == 0:
+        field.f = wp.zeros(shape, dtype = dtype)
+        field.stagger = wp.vec3(0.5, 0.5, 0.5)
+    elif dim == 1: 
+        field.f = wp.zeros(shapeu, dtype = dtype)
+        field.stagger = wp.vec3(0.0, 0.5, 0.5)
+    elif dim == 2:
+        field.f = wp.zeros(shapev, dtype = dtype)
+        field.stagger = wp.vec3(0.5, 0.0, 0.5)
+    elif dim == 3:
+        field.f = wp.zeros(shapew, dtype = dtype)
+        field.stagger = wp.vec3(0.5, 0.5, 0.0)
+
+    return field
+
+def make_mac_grid(dtype = float):
+    if dtype == float:
+        mac = MACGrid()
+    else: 
+        mac = MACGridInt()
+    mac.u = make_field(1, dtype)
+    mac.v = make_field(2, dtype)
+    mac.w = make_field(3, dtype)
+    return mac
+
+def field_like(field: Field):
+    new_field = Field()
+    new_field.d = field.d
+    new_field.stagger = field.stagger
+    new_field.f = wp.zeros_like(field.f)
+    return new_field

@@ -1,10 +1,11 @@
 import warp as wp
 from const_param import gravity
 from geometry import _sdf_cube
+from const_param import Field, MACGrid, h0
 @wp.kernel
 def integrate_3d(
-    v: wp.array3d(dtype=float), 
-    rho: wp.array3d(dtype=float), 
+    vel: MACGrid,
+    rho: Field,
     dt: float):
     i, j, k = wp.tid()
 
@@ -13,14 +14,14 @@ def integrate_3d(
     f_g = wp.vec3(0.0, -gravity, 0.0) * 1.0# * rho[i, j, k]
 
     # # integrate
-    if j != 0 and j != v.shape[1] - 1:
-        v[i, j, k] = v[i, j, k] + dt * f_g[1]
+    if j != 0 and j != vel.v.f.shape[1] - 1:
+        vel.v.f[i, j, k] = vel.v.f[i, j, k] + dt * f_g[1]
     # if j == v.shape[1] - 2:
     #     v[i, j + 1, k] = v[i, j + 1, k] + dt * f_g[1]
     
     # fade
     # rho[i, j] = rho[i, j] * (1.0 - 0.1 * dt)
-    rho[i, j, k] = rho[i, j, k] * (1.0 - 0.3 * dt)
+    rho.f[i, j, k] *= (1.0 - 0.3 * dt)
 
 
 @wp.kernel
@@ -40,26 +41,19 @@ def set_phi_3d(
 
 @wp.kernel
 def init_3d(
-    rho: wp.array3d(dtype=float), 
-    u: wp.array3d(dtype=float), 
-    v: wp.array3d(dtype = float), 
-    w: wp.array3d(dtype=float),
-    radius: int, 
+    rho: Field,
+    vel: MACGrid,
     dir: wp.vec3,
-    src_pos: wp.vec3,
-    h: float,
-    l: float, b: float, f: float):
+    src_pos: wp.vec3):
+
     i, j, k = wp.tid()
-
-    # d = wp.length(wp.vec3(float(i) + 0.5, float(j) + 0.5, float(k) + 0.5) * h + offset - src_pos)
-
-    pos = wp.vec3(float(i) + 0.5, float(j) + 0.5, float(k) + 0.5) * h + wp.vec3(l, b, f)
+    pos = wp.vec3(float(i) + 0.5, float(j) + 0.5, float(k) + 0.5) * h0
 
     d = wp.length(pos - src_pos)
 
     if d < 0.05:
-        rho[i, j, k] = 1.0
-        u[i, j, k] = dir[0]
-        v[i, j, k] = dir[1]
-        w[i, j, k] = dir[2]
+        rho.f[i, j, k] = 1.0
+        vel.u.f[i, j, k] = dir[0]
+        vel.v.f[i, j, k] = dir[1]
+        vel.w.f[i, j, k] = dir[2]
 

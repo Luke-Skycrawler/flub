@@ -1,5 +1,6 @@
 import warp as wp 
 from utils.util import sample_3d, fraction_of_fluid
+from const_param import Field, MACGrid, get_uf, IntField
 eps = 1e-5
 
 
@@ -34,21 +35,28 @@ def u_subtract_gradient_batty_3d(
             pass
 
 @wp.kernel
-def u_subtract_gradient_tag(
-        uf: wp.array3d(dtype=float),
-        u_rigid: wp.array3d(dtype=float),
-        pf: wp.array3d(dtype=float),
-        tag: wp.array3d(dtype = int),
-        l: float, r: float, h: float):
+def subtract_gradient_tag(
+    vel: MACGrid,
+    vel_rigid: MACGrid,
+    pf: Field,
+    tag: IntField,
+    d: int):
+
     i, j, k = wp.tid()
-    gridx = uf.shape[0] - 1
-    if 0 < i and i < gridx:
+    idx = wp.vec3i(i, j, k)
+    ii = idx[d - 1]
+    uf = get_uf(vel, d).f
+    u_rigid = get_uf(vel_rigid, d).f
+    gridx = uf.shape[d - 1] - 1
+    
+    if 0 < ii and ii < gridx:
+        il = wp.vec3i(idx)
+        il[d - 1] -= 1
+        pl = pf.f[il[0], il[1], il[2]]
+        pr = pf.f[i, j, k]
 
-        pl = pf[i - 1, j, k]
-        pr = pf[i, j, k]
-
-        tagl = tag[i - 1, j, k]
-        tagr = tag[i, j, k]
+        tagl = tag.f[il[0], il[1], il[2]]
+        tagr = tag.f[i, j, k]
 
         if tagl == 2 or tagr == 2:
             uf[i, j, k] = u_rigid[i, j, k]
@@ -56,138 +64,8 @@ def u_subtract_gradient_tag(
             uf[i, j, k] = uf[i, j, k] - (pr - pl)
         else:
             uf[i, j, k] = 0.0
-    elif l == 0.0:
+    else:
         uf[i, j, k] = 0.0
-
-@wp.kernel
-def u_subtract_gradient_tag_bc(
-        uf: wp.array3d(dtype=float),
-        u_rigid: wp.array3d(dtype=float),
-        pf: wp.array3d(dtype=float),
-        tag: wp.array3d(dtype = int),
-        boundary_p: wp.array3d(dtype = float),
-        l: float, r: float, h: float):
-    i, j, k = wp.tid()
-    gridx = uf.shape[0] - 1
-    # if 0 < i and i < gridx:
-    if True:
-
-        pl = wp.where(i > 0, pf[i - 1, j, k], boundary_p[0, j, k])
-        pr = wp.where(i < uf.shape[0] - 1, pf[i, j, k], boundary_p[1, j, k])
-
-        tagl = wp.where(i > 0, tag[i - 1, j, k], 1)
-        tagr = wp.where(i < uf.shape[0] - 1, tag[i, j, k], 1)
-
-        if tagl == 2 or tagr == 2:
-            uf[i, j, k] = u_rigid[i, j, k]
-        elif tagl == 1 or tagr == 1:
-            uf[i, j, k] = uf[i, j, k] - (pr - pl)
-        else:
-            uf[i, j, k] = 0.0
-
-@wp.kernel
-def v_subtract_gradient_tag(
-        vf: wp.array3d(dtype=float),
-        v_rigid: wp.array3d(dtype=float),
-        pf: wp.array3d(dtype=float),
-        tag: wp.array3d(dtype = int),
-        l: float, r: float, h: float):
-    i, j, k = wp.tid()
-    gridy = vf.shape[1] - 1
-    if 0 < j and j < gridy:
-
-        pb = pf[i, j - 1, k]
-        pt = pf[i, j, k]
-
-        tagb = tag[i, j - 1, k]
-        tagt = tag[i, j, k]
-
-        if tagb == 2 or tagt == 2:
-            vf[i, j, k] = v_rigid[i, j, k]
-        elif tagb == 1 or tagt == 1:
-            vf[i, j, k] = vf[i, j, k] - (pt - pb)
-        else:
-            vf[i, j, k] = 0.0
-    elif l == 0.0:
-        vf[i, j, k] = 0.0
-
-@wp.kernel
-def v_subtract_gradient_tag_bc(
-        vf: wp.array3d(dtype=float),
-        v_rigid: wp.array3d(dtype=float),
-        pf: wp.array3d(dtype=float),
-        tag: wp.array3d(dtype = int),
-        boundary_p: wp.array3d(dtype = float),
-        l: float, r: float, h: float):
-    i, j, k = wp.tid()
-    gridy = vf.shape[1] - 1
-    # if 0 < j and j < gridy:
-    if True:
-        pb = wp.where(j > 0, pf[i, j - 1, k], boundary_p[2, i, k])
-        pt = wp.where(j < vf.shape[1] - 1, pf[i, j, k], boundary_p[3, i, k])
-
-        tagb = wp.where(j > 0, tag[i, j - 1, k], 1)
-        tagt = wp.where(j < vf.shape[1] - 1, tag[i, j, k], 1)
-
-        if tagb == 2 or tagt == 2:
-            vf[i, j, k] = v_rigid[i, j, k]
-        elif tagb == 1 or tagt == 1:
-            vf[i, j, k] = vf[i, j, k] - (pt - pb)
-        else:
-            vf[i, j, k] = 0.0
-
-@wp.kernel
-def w_subtract_gradient_tag(
-        wf: wp.array3d(dtype=float),
-        w_rigid: wp.array3d(dtype=float),
-        pf: wp.array3d(dtype=float),
-        tag: wp.array3d(dtype = int),
-        l: float, r: float, h: float):
-    i, j, k = wp.tid()
-    gridz = wf.shape[2] - 1
-    if 0 < k and k < gridz:
-
-        pfar = pf[i, j, k - 1]
-        pnear = pf[i, j, k]
-
-        tagfar = tag[i, j, k - 1]
-        tagnear = tag[i, j, k]
-
-        if tagfar == 2 or tagnear == 2:
-            wf[i, j, k] = w_rigid[i, j, k]
-        elif tagfar == 1 or tagnear == 1:
-            wf[i, j, k] = wf[i, j, k] - (pnear - pfar)
-        else:
-            wf[i, j, k] = 0.0
-    elif l == 0.0:
-        wf[i, j, k] = 0.0
-
-
-@wp.kernel
-def w_subtract_gradient_tag_bc(
-        wf: wp.array3d(dtype=float),
-        w_rigid: wp.array3d(dtype=float),
-        pf: wp.array3d(dtype=float),
-        tag: wp.array3d(dtype = int),
-        boundary_p: wp.array3d(dtype = float),
-        l: float, r: float, h: float):
-    i, j, k = wp.tid()
-    gridz = wf.shape[2] - 1
-    # if 0 < k and k < gridz:
-    if True:
-        pfar = wp.where(k > 0, pf[i, j, k - 1], boundary_p[4, i, j])
-        pnear = wp.where(k < wf.shape[2] - 1, pf[i, j, k], boundary_p[5, i, j])
-
-        tagfar =  wp.where(k > 0, tag[i, j, k - 1], 1)
-        tagnear = wp.where(k < wf.shape[2] - 1, tag[i, j, k], 1)
-
-        if tagfar == 2 or tagnear == 2:
-            wf[i, j, k] = w_rigid[i, j, k]
-        elif tagfar == 1 or tagnear == 1:
-            wf[i, j, k] = wf[i, j, k] - (pnear - pfar)
-        else:
-            wf[i, j, k] = 0.0
-
 
 @wp.kernel
 def v_subtract_gradient_batty_3d(
