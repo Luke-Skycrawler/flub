@@ -14,16 +14,15 @@ def compute_rigid_phi(
     x: wp.array1d(dtype = wp.vec3),
     q: wp.array1d(dtype = wp.quat),
     geometry: wp.array1d(dtype = GeometryType3D),
-    l: float, b: float, f: float, h: float,
-    phi: wp.array3d(dtype = float), include_static: int
+    phi: Field, include_static: int
 ):
     '''NOTE: also include ignore static object option'''
     i, j, k = wp.tid()
-    u = (float(i) + 0.5) * h + l
-    v = (float(j) + 0.5) * h + b
-    w = (float(k) + 0.5) * h + f
+    u = (float(i) + 0.5) * h0 
+    v = (float(j) + 0.5) * h0 
+    w = (float(k) + 0.5) * h0 
     phiijk, tag = sdf_argmin_3d(u, v, w, x, q, geometry, include_static)
-    phi[i, j, k] = phiijk
+    phi.f[i, j, k] = phiijk
 
 @wp.kernel
 def reset_kernel(
@@ -489,12 +488,12 @@ class RigidCoupling:
         wp.launch(precompute_solid_vel, dim = vel_rigid.w.f.shape, inputs = [x, v, omega, vel_rigid, vel_owner, 3])
 
 
-    def compute_rigid_phi(self, phi, lbf = np.zeros(3), h = h0, include_static = 1):
+    def compute_rigid_phi(self, phi: Field, include_static = 1):
         x = self.x_pair.cur
         q =self.theta_pair.cur
         rigid_geometry = self.rigid_geometry
 
-        wp.launch(compute_rigid_phi, dim = phi.shape, inputs = [x, q, rigid_geometry, lbf[0], lbf[1], lbf[2], h, phi, include_static])
+        wp.launch(compute_rigid_phi, dim = shape, inputs = [x, q, rigid_geometry, phi, include_static])
 
     def copy_from(self, rc, dt):
         wp.copy(self.x_pair.cur, rc.x_pair.cur)

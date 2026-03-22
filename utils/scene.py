@@ -17,19 +17,7 @@ class SceneObject(MeshBase):
         self.q_seq = None
         self.name = "unnamed"
 
-    def load_npy(self , x_file = "x_seq.npy", q_file = "q_seq.npy"):
-        self.x_seq = np.load(x_file)
-        self.q_seq = np.load(q_file)
     
-    # def get_vertices_transformed(self):
-    #     vertices = self.V @ quat.as_rotation_matrix(self.q) + self.com.reshape((-1, 3))
-    #     return vertices
-
-class PatchSetup:
-    def __init__(self, res = (64, 64, 64), h_multiply = 0.5):
-        self.res = res
-        self.h_multiply = h_multiply
-
 class WarpSceneObject(Mesh):
     def __init__(self, path, normalize = False, centered_axis = [], build_mesh = True):
         super().__init__(path, normalize, centered_axis, build_mesh)
@@ -55,11 +43,7 @@ class WarpSceneObject(Mesh):
         self.radius = 0.1
         self.density = 1.0
 
-        self.patch_config = PatchSetup()
 
-    def load_npy(self , x_file = "x_seq.npy", q_file = "q_seq.npy"):
-        self.x_seq = np.load(x_file)
-        self.q_seq = np.load(q_file)
 
     def volume(self):
         if self.shape == "":
@@ -188,12 +172,6 @@ class WarpScene:
             # for _ in range(3):
             #     log(so.V, _)
 
-            # patch 
-            if "patch_res" in obj:
-                res = obj["patch_res"]
-                so.patch_config.res = tuple(res)
-            if "patch_h" in obj:
-                so.patch_config.h_multiply = obj["patch_h"]
                 
 
             if file in ["box", "sphere"]:

@@ -421,28 +421,26 @@ def process_tag(
 
 @wp.kernel
 def exclude_rigid_phi(
-    phi_rigid: wp.array3d(dtype=float),
-    phi_water: wp.array3d(dtype=float)
+    phi_rigid: Field,
+    phi_water: Field
 ):
     i, j, k = wp.tid()
-    if phi_rigid[i, j, k] < 0.0 and phi_water[i, j, k] < 0.0:
-        phi_water[i, j, k] = - phi_rigid[i, j, k]
+    if phi_rigid.f[i, j, k] < 0.0 and phi_water.f[i, j, k] < 0.0:
+        phi_water.f[i, j, k] = - phi_rigid.f[i, j, k]
 
 @wp.kernel
 def set_unknown_3d(
-    phi: wp.array3d(dtype=float),
-    u_tag: wp.array3d(dtype=int),
-    v_tag: wp.array3d(dtype=int),
-    w_tag: wp.array3d(dtype= int)
+    phi: Field,
+    tag: MACGridInt
 ):
     i, j, k = wp.tid()
-    pc = phi[i, j, k]
+    pc = phi.f[i, j, k]
     if pc >= 0.0:
-        u_tag[i, j, k] = 1
-        v_tag[i, j, k] = 1
-        w_tag[i, j, k] = 1
+        tag.u.f[i, j, k] = 1
+        tag.v.f[i, j, k] = 1
+        tag.w.f[i, j, k] = 1
     else:
-        u_tag[i, j, k] = 0
-        v_tag[i, j, k] = 0
-        w_tag[i, j, k] = 0
+        tag.u.f[i, j, k] = 0
+        tag.u.f[i, j, k] = 0
+        tag.u.f[i, j, k] = 0
 

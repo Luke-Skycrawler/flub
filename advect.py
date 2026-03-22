@@ -38,25 +38,20 @@ def advect_simple_3d(
 
 @wp.kernel
 def advect_phi(
-    uf: wp.array3d(dtype=float),
-    vf: wp.array3d(dtype=float),
-    wf: wp.array3d(dtype=float),
-    phi: wp.array3d(dtype=float),
-    new_phi: wp.array3d(dtype=float),
-    dt: float,
-    h: float
+    vel: MACGrid,
+    phi: Field, 
+    new_phi: Field
 ):
     i, j, k = wp.tid()
-    stagger = wp.vec3(0.5, 0.5, 0.5)
-    p = wp.vec3(float(i), float(j), float(k)) + stagger
-    p = backtrace(uf, vf, wf, p, dt, h)
-    gx = phi.shape[0]
-    gy = phi.shape[1]
-    gz = phi.shape[2]
+    p = wp.vec3(float(i), float(j), float(k)) + phi.stagger
+    p = backtrace(vel.u.f, vel.v.f, vel.w.f, p, dt, h0)
+    gx = phi.f.shape[0]
+    gy = phi.f.shape[1]
+    gz = phi.f.shape[2]
     if in_bound(p[0], gx) and in_bound(p[1], gy) and in_bound(p[2], gz):
-        new_phi[i, j, k] = trilerp_stagger(phi, p, stagger)
+        new_phi.f[i, j, k] = trilerp_stagger(phi.f, p, phi.stagger)
     else: 
-        new_phi[i, j, k] = h0
+        new_phi.f[i, j, k] = h0
 
 
 @wp.kernel

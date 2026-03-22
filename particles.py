@@ -1,6 +1,6 @@
 import warp as wp
 import numpy as np
-from const_param import n_particle_per_cell, h0, res, timer_active, gridx, gridy, gridz
+from const_param import n_particle_per_cell, h0, res, timer_active, gridx, gridy, gridz, MACGrid, Field, shapeu, shapev, shapew, shape, get_uf
 from utils.util import sample_velocity_3d, divide, inv_bilerpu, inv_bilerpv, inv_bilerpw, sample_3d, trilerp
 from fenwick import FenwickTree
 from typing import Any
@@ -10,10 +10,10 @@ max_num_particles_per_cell = n_particle_per_cell * 3
 clip_max = n_particle_per_cell * 2
 flip_alpha = 0.0
 @wp.kernel
-def min_kernel_offset(q1: wp.array3d(dtype = float), q2: wp.array3d(dtype = float), h: float):
+def min_kernel_offset(q1: Field, q2: Field, h: float):
     i, j, k = wp.tid()
-    if q2[i, j, k] < q1[i, j, k] + h:
-        q1[i, j, k] = q2[i, j, k]
+    if q2.f[i, j, k] < q1.f[i, j, k] + h:
+        q1.f[i, j, k] = q2.f[i, j, k]
     # else:
     #     q1[i, j, k] = q1[i, j, k] + h
 
@@ -38,7 +38,7 @@ def cnt_activate(activated: wp.array1d(dtype = int), prefix_sum: wp.array1d(dtyp
 
 
 @wp.kernel
-def _resample_1(phi: wp.array3d(dtype = float), 
+def _resample_1(phi: Field, 
               x: wp.array1d(dtype = wp.vec3), v: wp.array1d(dtype = wp.vec3),
               cnt_particles: wp.array3d(dtype = int), 
               activated: wp.array1d(dtype = int),
@@ -52,7 +52,7 @@ def _resample_1(phi: wp.array3d(dtype = float),
 
     offs = wp.atomic_add(cnt_particles, i, j, k, 1)
     cond1 = wp.min(cell) >= 0 and wp.max(cell, shape) == shape and p < activated[0]
-    cond2 = offs < clip_max and not (phi[i, j, k] < -R or phi[i, j, k] > h)
+    cond2 = offs < clip_max and not (phi.f[i, j, k] < -R or phi.f[i, j, k] > h)
 
     dele = wp.where(cond1 and cond2, 0, 1)
 
@@ -72,8 +72,8 @@ def init_xv(
     return x, v
     
 @wp.kernel
-def _resample_2(phi: wp.array3d(dtype = float), 
-              uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype =float), 
+def _resample_2(phi: Field, 
+              vel: MACGrid, 
               x: wp.array1d(dtype = wp.vec3), v: wp.array1d(dtype = wp.vec3), 
               cnt_particles: wp.array3d(dtype = int), 
               activated: wp.array1d(dtype = int),
@@ -84,7 +84,7 @@ def _resample_2(phi: wp.array3d(dtype = float),
 
     i, j, k = wp.tid()
     n_particles = cnt_particles[i, j, k]
-    if -R <= phi[i, j, k] and phi[i, j, k] <= -h:
+    if -R <= phi.f[i, j, k] and phi.f[i, j, k] <= -h:
         # resample
 
         
@@ -95,7 +95,7 @@ def _resample_2(phi: wp.array3d(dtype = float),
             # x[p] = wp.vec3(float(i) + wp.randf(seed), float(j) + wp.randf(seed), float(k) + wp.randf(seed)) / float(res)
             # v[p] = sample_velocity_3d(uf, vf, wf, x[p] * float(res))
 
-            xp, vp = init_xv(uf, vf, wf, i, j, k, res, kk)
+            xp, vp = init_xv(vel.u.f, vel.v.f, vel.w.f, i, j, k, res, kk)
 
             if p < x.shape[0] and p >= 0 :
                 x[p] = xp
@@ -151,62 +151,42 @@ def normal_at(
     return wp.normalize(grad_at(phi, pos))
     
 @wp.kernel
-def excel(
+def exile(
     x: wp.array1d(dtype = wp.vec3),
     v: wp.array1d(dtype = wp.vec3),
-    phi_rigid: wp.array3d(dtype = float),
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float)):
+    phi_rigid: Field,
+    vel: MACGrid):
     p = wp.tid()
     pos = x[p] / h0
-    phi = trilerp(phi_rigid, pos)
+    phi = trilerp(phi_rigid.f, pos)
     if phi < 0.0:
-        normal = normal_at(phi_rigid, pos)
+        normal = normal_at(phi_rigid.f, pos)
         x[p] = x[p] + normal * (-phi)
         # x[p] = wp.vec3(-1.0, -1.0, -1.0)
-        v[p] = sample_velocity_3d(uf, vf, wf, pos)
+        v[p] = sample_velocity_3d(vel.u.f, vel.v.f, vel.w.f, pos)
     
 @wp.kernel
-def _nbcombine_1(
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float), 
-    uu: wp.array3d(dtype = float), vv: wp.array3d(dtype = float), ww: wp.array3d(dtype = float),
-    phi: wp.array3d(dtype = float), h: float, r: float, R: float):
+def _nbcombine(
+    vel_grid: MACGrid,
+    vel_p: MACGrid, 
+    phi: Field,
+    r: float,
+    d: int):
     
     i, j, k = wp.tid()
     phiu = 0.0
-    if 0 < i and i < res:
-        phiu = (phi[i - 1, j, k] + phi[i, j, k]) * 0.5
+    uf = get_uf(vel_grid, d).f
+    uu = get_uf(vel_p, d).f
+    idx = wp.vec3i(i, j, k)
+    ii = idx[d - 1]
+    if 0 < ii and ii < uf.shape[d - 1] - 1:
+        idx[d - 1] -= 1
+        phil = phi.f[idx[0], idx[1], idx[2]]
+        phir = phi.f[i, j, k]
+        phiu = (phil + phir) * 0.5
     if phiu >= -r:
         uf[i, j, k] = uu[i, j, k]
     
-@wp.kernel
-def _nbcombine_2(
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float),
-    uu: wp.array3d(dtype = float), vv: wp.array3d(dtype = float), ww: wp.array3d(dtype = float),
-              phi: wp.array3d(dtype = float), 
-              h: float, r: float, R: float
-              ):
-    
-    i, j, k = wp.tid()
-    phiv = 0.0
-    if 0 < j and j < res:
-        phiv = (phi[i, j - 1, k] + phi[i, j, k]) * 0.5
-    if phiv >= -r:
-        vf[i, j, k] = vv[i, j, k]
-
-@wp.kernel
-def _nbcombine_3(
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float),
-    uu: wp.array3d(dtype = float), vv: wp.array3d(dtype = float), ww: wp.array3d(dtype = float),
-    phi: wp.array3d(dtype = float), 
-    h: float, r: float, R: float
-    ):
-    
-    i, j, k = wp.tid()
-    phiw = 0.0
-    if 0 < k and k < res:
-        phiw = (phi[i, j, k] + phi[i, j, k - 1]) * 0.5
-    if phiw >= -r:
-        wf[i, j, k] = ww[i, j, k]
         
 class ParticleSystem:
     def __init__(self, shape = (256, 256, 256), sparsity = 1):
@@ -239,12 +219,12 @@ class ParticleSystem:
         self.dofs = [self.x, self.v]
         # self.rd = ss.Redistance(3)
     
-    def initialize_particles(self, phi, uf, vf, wf):
+    def initialize_particles(self, phi: Field, vel: MACGrid):
         self.activated.zero_()
         self.deleted.fill_(1)
         self.cnt_particles.zero_()
-        args = [phi, uf, vf, wf] + self.dofs + self.fields + [self.h, self.r, self.R]
-        wp.launch(_initialize, dim = phi.shape, inputs = args)
+        args = [phi, vel] + self.dofs + self.fields + [self.h, self.r, self.R]
+        wp.launch(_initialize, dim = shape, inputs = args)
 
         
         
@@ -263,98 +243,88 @@ class ParticleSystem:
         wp.launch(cnt_activate, dim = (1), inputs = [self.activated, self.ft.sum])
         self.activated_int= int(self.activated.numpy()[0])
         
-    def nb_flip_step_phi(self, phi_prime, phi_p, lbf = np.zeros((3), dtype = np.float32), h = h0):
-        # if h == h0:
-        if True:
-            phi_p.fill_(1.0)
-            self.compute_water_phi(phi_p, lbf, h, h0)
-            wp.launch(min_kernel_offset, dim = phi_prime.shape, inputs = [phi_prime, phi_p, h0])
-        # if time_scale == 0 or h == h0:
-        if True:
-            self.redistance(phi_prime, h)
+    def nb_flip_step_phi(self, phi_prime: Field, phi_p: Field):
+        '''
+        phi_prime: phi after advection 
+        phi_p: returns phi from particles 
+        '''
+        phi_p.f.fill_(1.0)
+        self.compute_water_phi(phi_p, radius = h0)
+        wp.launch(min_kernel_offset, dim = phi_prime.f.shape, inputs = [phi_prime, phi_p, h0])
 
-    def compute_water_phi(self, phi, lbf, h = h0, r = h0):
+        self.redistance(phi_prime, h0)
+
+    def compute_water_phi(self, ret: Field, radius = h0):
+        '''
+        radius: particle radius for phi compute 
+        '''
         activated = self.activated_int
         wp.launch(_compute_water_phi, dim=(
-            activated), inputs=[self.x, phi, lbf[0], lbf[1], lbf[2], h, r])
+            activated), inputs=[self.x, ret, radius])
         for i in range(8):
-            wp.launch(_expand, dim=phi.shape, inputs=[phi, i % 2])
+            wp.launch(_expand, dim=shape, inputs=[ret, i % 2])
             
-    def redistance(self, phi, h, set_boundary = 0):
+    def redistance(self, phi: Field, h: float, set_boundary = 0):
 
         with wp.ScopedTimer("redistance", active=timer_active, synchronize=True):
-            redistance(phi, h, set_boundary = set_boundary)
+            redistance(phi.f, h, set_boundary = set_boundary)
 
-    def out(self, phi_rigid, uf, vf, wf):
-        wp.launch(excel, dim = self.activated_int, inputs = [self.x, self.v, phi_rigid, uf, vf, wf])
-    def resample(self, phi_prime, uf, vf, wf):
+    def out(self, phi_rigid: Field, vel: MACGrid):
+        wp.launch(exile, dim = self.activated_int, inputs = [self.x, self.v, phi_rigid, vel])
+
+    def resample(self, phi_prime: Field, vel: MACGrid):
         with wp.ScopedTimer("resample", active=timer_active, synchronize=True):
             self.cnt_particles.zero_()
             self.deleted.fill_(1)
-            args = [phi_prime, uf, vf, wf] + self.dofs + self.fields + [self.h, self.r, self.R]
+            args = [phi_prime, vel] + self.dofs + self.fields + [self.h, self.r, self.R]
             args1 = [phi_prime] + self.dofs + self.fields + [self.h, self.r, self.R]
             n_particles = self.activated_int
             wp.launch(_resample_1, dim = n_particles, inputs = args1)
-            wp.launch(_resample_2, dim = phi_prime.shape, inputs = args)
+            wp.launch(_resample_2, dim = phi_prime.f.shape, inputs = args)
             
             self.compress()
     
-    def nbcombine(self, uf, vf, wf, up, vp, w_p, phi):
-        args = [uf, vf, wf, up, vp, w_p, phi, self.h, self.r, self.R]
-        wp.launch(_nbcombine_1, dim = uf.shape, inputs = args)
-        wp.launch(_nbcombine_2, dim = vf.shape, inputs = args)
-        wp.launch(_nbcombine_3, dim = wf.shape, inputs = args)
+    def nbcombine(self, vel_grid: MACGrid, vel_p: MACGrid, phi: Field):  
+        wp.launch(_nbcombine, dim = shapeu, inputs = [vel_grid, vel_p, phi, self.r, 1])
+        wp.launch(_nbcombine, dim = shapev, inputs = [vel_grid, vel_p, phi, self.r, 2])
+        wp.launch(_nbcombine, dim = shapew, inputs = [vel_grid, vel_p, phi, self.r, 3])
 
-    def step(self, uf, vf, wf, dt, pf = None, u1 = None, v1 = None, w1 = None):
+    def step(self, vel0: MACGrid, dt, pf: Field = None, vel1: MACGrid = None):
         if pf is None:
-            wp.launch(particle_step, dim = int(self.activated_int), inputs = [self.x, self.v, uf, vf, wf, self.activated, dt])
+            wp.launch(particle_step, dim = int(self.activated_int), inputs = [self.x, self.v, vel0, self.activated, dt])
         else :
 
-            wp.launch(particle_step_flip, dim = int(self.activated_int), inputs = [self.x, self.v, uf, vf, wf, u1, v1, w1, pf, self.activated, dt])
+            wp.launch(particle_step_flip, dim = int(self.activated_int), inputs = [self.x, self.v, vel0, vel1, pf, self.activated, dt])
 
         
-    def p2g(self, uf, vf, wf, u1, v1, w1):
+    def p2g(self, vel: MACGrid, weight: MACGrid):
 
         '''
         uf, vf, wf: returns the grid velocity field
         u1, v1, w1: temporary fields
         '''
         # _p2g(particles, uf, vf, grid_mu, grid_mv)
-        u1.zero_()
-        v1.zero_()
-        w1.zero_()
+        weight.u.f.zero_()
+        weight.v.f.zero_()
+        weight.w.f.zero_()
 
-        uf.zero_()
-        vf.zero_()
-        wf.zero_()
+        vel.u.f.zero_()
+        vel.v.f.zero_()
+        vel.w.f.zero_()
         
         x = self.x
         v = self.v
         n_particles = self.activated_int
-        wp.launch(p2g_kernel, dim = int(n_particles), inputs = [x, v, uf, vf, wf, u1, v1, w1])
+        wp.launch(p2g_kernel, dim = int(n_particles), inputs = [x, v, vel, weight])
 
-        wp.launch(divide, dim = uf.shape, inputs = [uf, u1])
-        wp.launch(divide, dim = vf.shape, inputs = [vf, v1])
-        wp.launch(divide, dim = wf.shape, inputs = [wf, w1])
+        wp.launch(divide, dim = shapeu, inputs = [vel.u.f, weight.u.f])
+        wp.launch(divide, dim = shapev, inputs = [vel.v.f, weight.v.f])
+        wp.launch(divide, dim = shapew, inputs = [vel.w.f, weight.w.f])
 
-        wp.launch(enforce_boundary, dim = (1), inputs = [uf, vf, wf])
+        wp.launch(enforce_boundary, dim = (1), inputs = [vel])
         # enforce_boundary(uf, vf)
 
 
-
-@wp.func
-def avg_neighbor(vf: wp.array2d(), i: int, j: int):
-    sum = float(0.0)
-    cnt = int(0)
-    for ii in range(-1, 2):
-        for jj in range(-1, 2):
-            if 0 <= i + ii and i + ii < vf.shape[0] and 0 <= j + jj and j + jj < vf.shape[1]:
-                sum += vf[i + ii, j + jj]
-                cnt += 1
-    ret = 0.0
-    if cnt > 0:
-        ret = sum / float(cnt)
-    return ret
 
 @wp.func
 def _avg_neighbor(vf: wp.array3d(), i: int, j: int, k: int):
@@ -374,18 +344,11 @@ def _avg_neighbor(vf: wp.array3d(), i: int, j: int, k: int):
         ret = sum / float(cnt)
     return ret
 
-
 @wp.kernel
-def expand(phi: wp.array2d(dtype=float), odd: int):
-    i, j = wp.tid()
-    if (i + j) % 2 == odd:
-        phi[i, j] = min(phi[i, j], avg_neighbor(phi, i, j))
-
-@wp.kernel
-def _expand(phi: wp.array3d(dtype=float), odd: int):
+def _expand(phi: Field, odd: int):
     i, j, k = wp.tid()
     if (i + j + k) % 2 == odd:
-        phi[i, j, k] = min(phi[i, j, k], _avg_neighbor(phi, i, j, k))
+        phi.f[i, j, k] = min(phi.f[i, j, k], _avg_neighbor(phi.f, i, j, k))
 
 
 @wp.func
@@ -396,21 +359,18 @@ def update_min(phi: wp.array3d(dtype=float), i: int, j: int, k: int, dis: float)
 
 @wp.kernel
 def _compute_water_phi(
-        px: wp.array1d(dtype=wp.vec3),
-        phi: wp.array3d(dtype=float),
-        l: float, b: float, f: float, h: float, r: float):
-    # for i in particles:
-
+    px: wp.array1d(dtype=wp.vec3),
+    phi: Field, r: float):
     '''
     NOTE: particle size needs to be decided: do we use finer particles on finer patches? add field for particle radius? Or do we just stick to coarse manage all the particles (may limit the adaptivity)
     '''
     i = wp.tid()
     p = px[i]
-    _p = px[i] - wp.vec3(l, b, f)
+    _p = px[i]
 
-    ix = int(wp.floor(_p[0] / h - 0.5))
-    iy = int(wp.floor(_p[1] / h - 0.5))
-    iz = int(wp.floor(_p[2] / h - 0.5))
+    ix = int(wp.floor(_p[0] / h0 - 0.5))
+    iy = int(wp.floor(_p[1] / h0 - 0.5))
+    iz = int(wp.floor(_p[2] / h0 - 0.5))
 
     ix = wp.max(ix, 0)
     iy = wp.max(iy, 0)
@@ -420,15 +380,15 @@ def _compute_water_phi(
     iy = wp.min(iy, gridy - 1)
     iz = wp.min(iz, gridz - 1)
 
-    pa = wp.vec3(float(ix) + 0.5, float(iy) + 0.5, float(iz) + 0.5) * h + wp.vec3(l, b, f)
-    pb = pa + wp.vec3(1.0, 0.0, 0.0) * h
-    pc = pa + wp.vec3(0.0, 1.0, 0.0) * h
-    pd = pa + wp.vec3(1.0, 1.0, 0.0) * h
+    pa = wp.vec3(float(ix) + 0.5, float(iy) + 0.5, float(iz) + 0.5) * h0
+    pb = pa + wp.vec3(1.0, 0.0, 0.0) * h0
+    pc = pa + wp.vec3(0.0, 1.0, 0.0) * h0
+    pd = pa + wp.vec3(1.0, 1.0, 0.0) * h0
 
-    pe = pa + wp.vec3(0.0, 0.0, 1.0) * h
-    pf = pa + wp.vec3(1.0, 0.0, 1.0) * h
-    pg = pa + wp.vec3(0.0, 1.0, 1.0) * h
-    ph = pa + wp.vec3(1.0, 1.0, 1.0) * h
+    pe = pa + wp.vec3(0.0, 0.0, 1.0) * h0
+    pf = pa + wp.vec3(1.0, 0.0, 1.0) * h0
+    pg = pa + wp.vec3(0.0, 1.0, 1.0) * h0
+    ph = pa + wp.vec3(1.0, 1.0, 1.0) * h0
 
     da = wp.length(p - pa) - r * 1.0
     db = wp.length(p - pb) - r * 1.0
@@ -442,15 +402,15 @@ def _compute_water_phi(
     dh = wp.length(p - ph) - r * 1.0
 
 
-    update_min(phi, ix, iy, iz, da)
-    update_min(phi, ix + 1, iy, iz, db)
-    update_min(phi, ix, iy + 1, iz, dc)
-    update_min(phi, ix + 1, iy + 1, iz, dd)
+    update_min(phi.f, ix, iy, iz, da)
+    update_min(phi.f, ix + 1, iy, iz, db)
+    update_min(phi.f, ix, iy + 1, iz, dc)
+    update_min(phi.f, ix + 1, iy + 1, iz, dd)
 
-    update_min(phi, ix, iy, iz + 1, de)
-    update_min(phi, ix + 1, iy, iz + 1, df)
-    update_min(phi, ix, iy + 1, iz + 1, dg)
-    update_min(phi, ix + 1, iy + 1, iz + 1, dh)
+    update_min(phi.f, ix, iy, iz + 1, de)
+    update_min(phi.f, ix + 1, iy, iz + 1, df)
+    update_min(phi.f, ix, iy + 1, iz + 1, dg)
+    update_min(phi.f, ix + 1, iy + 1, iz + 1, dh)
     
 
 
@@ -470,7 +430,7 @@ def forward_rk3_3d(
 def particle_step(
     # tracer_particles: Particles, 
     x: wp.array1d(dtype = wp.vec3), v: wp.array1d(dtype = wp.vec3),
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float), 
+    vel: MACGrid,
     activated: wp.array1d(dtype = int),
     dt: float):
 
@@ -478,30 +438,30 @@ def particle_step(
     if i < activated[0]:
         p = x[i] / h0
 
-        v[i] = sample_velocity_3d(uf, vf, wf, p)
+        v[i] = sample_velocity_3d(vel.u.f, vel.v.f, vel.w.f, p)
         bound = wp.vec3(h0 * float(gridx), h0 * float(gridy), h0 * float(gridz))
 
-        xi = forward_rk3_3d(uf, vf, wf, p, dt) * h0
+        xi = forward_rk3_3d(vel.u.f, vel.v.f, vel.w.f, p, dt) * h0
         x[i] = wp.vec3(wp.clamp(xi[0], 0.0, bound[0]), wp.clamp(xi[1], 0.0, bound[1]), wp.clamp(xi[2], 0.0 , bound[2]))
 
 @wp.kernel
 def particle_step_flip(
     x: wp.array1d(dtype = wp.vec3), v: wp.array1d(dtype = wp.vec3),
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float), 
-    uf_last: wp.array3d(dtype = float), vf_last: wp.array3d(dtype = float), wf_last: wp.array3d(dtype = float), 
-    pf: wp.array3d(dtype = float),
+    vel: MACGrid,
+    vel_last: MACGrid,
+    pf: Field,
     activated: wp.array1d(dtype = int),
     dt: float):
     i = wp.tid()            
     if i < activated[0]:
         p = x[i] / h0
-        v1 = sample_velocity_3d(uf, vf, wf, p)
-        v0 = sample_velocity_3d(uf_last, vf_last, wf_last, p)
+        v1 = sample_velocity_3d(vel.u.f, vel.v.f, vel.w.f, p)
+        v0 = sample_velocity_3d(vel_last.u.f, vel_last.v.f, vel_last.w.f, p)
         v[i] = ((v1 - v0) + v[i]) * flip_alpha + v1 * (1.0 - flip_alpha)
 
         bound = wp.vec3(h0 * float(gridx), h0 * float(gridy), h0 * float(gridz))
 
-        xi = forward_rk3_3d(uf, vf, wf, p, dt) * h0
+        xi = forward_rk3_3d(vel.u.f, vel.v.f, vel.w.f, p, dt) * h0
         x[i] = wp.vec3(wp.clamp(xi[0], 0.0, bound[0]), wp.clamp(xi[1], 0.0, bound[1]), wp.clamp(xi[2], 0.0 , bound[2]))
 
 
@@ -509,53 +469,52 @@ def particle_step_flip(
 @wp.kernel
 def p2g_kernel(
     x: wp.array1d(dtype = wp.vec3), v: wp.array1d(dtype = wp.vec3),
-    uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float),
-    u1: wp.array3d(dtype = float), v1: wp.array3d(dtype = float), w1: wp.array3d(dtype = float),
-    ):
+    vel: MACGrid, weight: MACGrid):
     i = wp.tid()
     p = x[i] / h0 
-    inv_bilerpu(u1, p, 1.0)
-    inv_bilerpv(v1, p, 1.0)
-    inv_bilerpw(w1, p, 1.0)
+    inv_bilerpu(weight.u.f, p, 1.0)
+    inv_bilerpv(weight.v.f, p, 1.0)
+    inv_bilerpw(weight.w.f, p, 1.0)
 
-    inv_bilerpu(uf, p, v[i][0])
-    inv_bilerpv(vf, p, v[i][1])
-    inv_bilerpw(wf, p, v[i][2])
+    inv_bilerpu(vel.u.f, p, v[i][0])
+    inv_bilerpv(vel.v.f, p, v[i][1])
+    inv_bilerpw(vel.w.f, p, v[i][2])
 
 @wp.kernel
-def enforce_boundary(uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype = float)):
+def enforce_boundary(vel: MACGrid):
     # for j, k in range(gridy, gridz):
     for j in range(gridy):
         for k in range(gridz):
-            uf[0, j, k] = 0.0
-            uf[gridx, j, k] = 0.0 
+            vel.u.f[0, j, k] = 0.0
+            vel.u.f[gridx, j, k] = 0.0 
     # for i, k in range(gridx, gridz):
     for i in range(gridx):
         for k in range(gridz):
-            vf[i, 0, k] = 0.0
-            vf[i, gridy, k] = 0.0
+            vel.v.f[i, 0, k] = 0.0
+            vel.v.f[i, gridy, k] = 0.0
     # for i, j in range(gridx, gridy):
     for i in range(gridx):
         for j in range(gridy):
-            wf[i, j, 0] = 0.0
-            wf[i, j, gridz] = 0.0
+            vel.w.f[i, j, 0] = 0.0
+            vel.w.f[i, j, gridz] = 0.0
 
 @wp.kernel
-def _initialize(phi: wp.array3d(dtype = float), 
-              uf: wp.array3d(dtype = float), vf: wp.array3d(dtype = float), wf: wp.array3d(dtype =float), 
+def _initialize(phi: Field,
+              vel: MACGrid,
               x: wp.array1d(dtype = wp.vec3), v: wp.array1d(dtype = wp.vec3), 
               cnt_particles: wp.array3d(dtype = int), 
               activated: wp.array1d(dtype = int),
               deleted: wp.array1d(dtype = int8), 
               h: float, r: float, R: float
               ):
-    res = phi.shape[0]  
+    res = phi.f.shape[0]  
     i, j, k = wp.tid()
-    phiijk = phi[i, j, k]
+    phiijk = phi.f[i, j, k]
     if (phiijk < 0.0 and phiijk >= -R):
         p = wp.atomic_add(activated, 0, n_particle_per_cell)
         for ii in range(n_particle_per_cell):
-            xp, vp = init_xv(uf, vf, wf, i, j, k, res, ii)
+            # FIXME: dangerous use of res
+            xp, vp = init_xv(vel.u.f, vel.v.f, vel.w.f, i, j, k, res, ii)
             x[p + ii] = xp
             v[p + ii] = vp
             deleted[p + ii] = 0

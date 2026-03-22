@@ -1,4 +1,5 @@
 import warp as wp
+from const_param import shapeu, shapev, shapew, MACGrid, MACGridInt, get_uf
 @wp.func
 def is_valid_3d(unknown: wp.array3d(dtype=int), i: int, j: int, k :int):
     ret = 0 <= i and i < unknown.shape[0] and 0 <= j and j < unknown.shape[1] and 0 <= k and k < unknown.shape[2] and unknown[i, j, k] == 0
@@ -6,9 +7,12 @@ def is_valid_3d(unknown: wp.array3d(dtype=int), i: int, j: int, k :int):
 
 @wp.kernel
 def extrapolate_3d(
-    qf: wp.array3d(dtype=float), 
-    unknown: wp.array3d(dtype=int)):
+    mac: MACGrid,
+    u: MACGridInt,
+    d: int):
     i, j, k = wp.tid()
+    qf = get_uf(mac, d).f
+    unknown = get_uf(u, d).f
     if unknown[i, j, k] == 1:
         n_avg = int(0)
         q_sum = float(0)
@@ -31,16 +35,13 @@ def flush_1_3d(tag: wp.array3d(dtype=int)):
         tag[i, j, k] = 1
 
 
-def extrapolate_by_1(uf, vf, wf, u_unknown, v_unknown, w_unknown):
-    shapeu = u_unknown.shape
-    shapev = v_unknown.shape
-    shapew = w_unknown.shape
+def extrapolate_by_1(vel: MACGrid, tag: MACGridInt):
     wp.launch(extrapolate_3d, dim=shapeu,
-            inputs=[uf, u_unknown])
+            inputs=[vel, tag, 1])
     wp.launch(extrapolate_3d, dim=shapev,
-                inputs=[vf, v_unknown])
+                inputs=[vel, tag, 2])
     wp.launch(extrapolate_3d, dim=shapew,
-                inputs=[wf, w_unknown])
-    wp.launch(flush_1_3d, dim=shapeu, inputs=[u_unknown])
-    wp.launch(flush_1_3d, dim=shapev, inputs=[v_unknown])
-    wp.launch(flush_1_3d, dim=shapev, inputs=[w_unknown])
+                inputs=[vel, tag, 3])
+    wp.launch(flush_1_3d, dim=shapeu, inputs=[tag.u.f])
+    wp.launch(flush_1_3d, dim=shapev, inputs=[tag.v.f])
+    wp.launch(flush_1_3d, dim=shapew, inputs=[tag.w.f])

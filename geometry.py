@@ -334,14 +334,14 @@ def _precompute_fij_w_3d_cached(
 
 @wp.kernel
 def _tag_dirichlet(
-    tag: wp.array3d(dtype = int),
-    phi: wp.array3d(dtype = float)
+    tag: IntField,
+    phi: Field
 ):
     i, j, k = wp.tid()
-    if phi[i, j, k] > 0.0:
-        tag[i, j, k] = 0
+    if phi.f[i, j, k] > 0.0:
+        tag.f[i, j, k] = 0
     else:
-        tag[i, j, k] = 1
+        tag.f[i, j, k] = 1
 
 
 @wp.kernel
@@ -405,7 +405,7 @@ class PrecomputeFaceFraction:
         self.use_mesh = use_mesh
     
     def tag_dirichlet(self, tag, phi):
-        wp.launch(_tag_dirichlet, dim = phi.shape, inputs = [tag, phi])
+        wp.launch(_tag_dirichlet, dim = phi.f.shape, inputs = [tag, phi])
 
     def tag_neumann(self, tag: IntField, phi: Field):
         wp.launch(_tag_neumann, dim = phi.f.shape, inputs = [tag, phi])

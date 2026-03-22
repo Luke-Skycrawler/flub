@@ -5,7 +5,7 @@ from multigrid.mgpcg import MGPCG
 from divergence import divergence_tag, mask_with_tag
 from subtract_gradient import subtract_gradient_tag
 from const_param import *
-from utils.util import scale_by_3d, TexPair
+from utils.util import scale_by_3d
 
 from adjustable import integrate_3d, init_3d
 
@@ -14,15 +14,11 @@ from geometry import PrecomputeFaceFraction
 from rigid_coupling import RigidCoupling
 from typing import List, Dict
 
+# TODO: make read the scene in top level class instead of rigid coupling
+
 class Example:
     def __init__(self):
-        self.sim_fps = 60.0
-        self.sim_substeps = 1
-        self.iterations = 100
         self.sim_time = 0.0
-        self.h = h
-        self.device = wp.get_device()
-        self.patch_focused = 0
 
         self.vel0, self.vel1, self.frac, self.vel_rigid = (make_mac_grid() for _ in range(4))
         self.vel_owner = make_mac_grid(dtype = int)
@@ -69,7 +65,7 @@ class Example:
         advect_3d(self.vel0, self.q0, self.vel1, self.q1)
 
         (self.vel0, self.vel1) = (self.vel1, self.vel0)
-        self.q0, self.q1 = self.q1, self.q0
+        (self.q0, self.q1) = (self.q1, self.q0)
 
     def ext_forces(self):
         _src_pos = self.rc.scene.src_pos
@@ -85,7 +81,9 @@ class Example:
         # force integrate
         wp.launch(integrate_3d, dim=shape, inputs=[self.vel0, self.q0, dt])
 
-    def divergence(self, rc: RigidCoupling):
+    def divergence(self):
+        rc = self.rc
+
         rc.precompute_solid_vel_3d(rc.x_pair.cur, rc.theta_pair.cur, rc.v, rc.omega, rc.rigid_geometry, self.vel_rigid, self.vel_owner) 
         # wp.launch(divergence_fractional_3d, dim = shape, inputs = [self.u0, self.v0, self.w0, self.div, self.fu, self.fu, self.fw, self.u_rigid, self.v_rigid, self.w_rigid])
 
@@ -95,7 +93,8 @@ class Example:
         wp.launch(scale_by_3d, dim = shape, inputs = [self.div, -1.0 / h])
         print("L inf u div = ", np.max(self.div.f.numpy()))
  
-    def rigid_swap(self, rc: RigidCoupling):
+    def Dh(self):
+        rc = self.rc
         pff = self.pff
 
         rc.x_pair.swap()
@@ -109,18 +108,20 @@ class Example:
         # wp.launch(min_kernel, dim = shapew, inputs= [self.fw, self.fw_static])
         pff.precompute_fij_with_cache(self.frac, self.vel_owner, rc)
 
-        self.tag.f.fill_(1)
-        # self.pff.precompute_tag(self.tag, rc.x_pair.cur, rc.theta_pair.cur, rc.rigid_geometry)
+        self.tag_dirichlet()
         self.phi_rigid.f.fill_(1.0)
         pff.precompute_phi_with_cached_levelset(self.phi_rigid.f, rc, stagger = wp.vec3(0.5, 0.5, 0.5))
         pff.tag_neumann(self.tag, self.phi_rigid)
 
+    def tag_dirichlet(self): 
+        # fill up the space, no need to set dirichlet boundary condition
+        self.tag.f.fill_(1)
 
-    def project(self, rc: RigidCoupling):
+    def project(self):
         '''prerequsite: face fractions computed on faces'''
 
         print("\nbefore projection: ")
-        self.divergence(rc)
+        self.divergence()
             
         # pressure solve
         self.p0.f.zero_()
@@ -143,10 +144,9 @@ class Example:
 
         wp.launch(scale_by_3d, dim=shape, inputs=[self.p0, h0])
         print("after projection:")
-        self.divergence(rc)
+        self.divergence()
 
     def step(self):
-        rc = self.rc
         # 1. advect the fluid 
         with wp.ScopedTimer("step(): global advect", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
             self.advect()
@@ -154,7 +154,7 @@ class Example:
 
         # 2. move rigid to (t + 1) state
         with wp.ScopedTimer("step(): Dh", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
-            self.rigid_swap(rc)
+            self.Dh()
 
         # with wp.ScopedTimer("step(): coupling force", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
         #     self.apply_coupling_force(rc)
@@ -164,7 +164,7 @@ class Example:
 
         # 6. perform div-free projection using effective velocity
         with wp.ScopedTimer("step(): global project", active=timer_active, synchronize=True, dict = self.timing_results[self.frame]):
-            self.project(rc = rc)
+            self.project()
         self.frame += 1
 
     def render(self, iso_value = 1e-2):
