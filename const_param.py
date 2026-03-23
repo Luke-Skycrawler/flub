@@ -10,8 +10,8 @@ water_config = ["scenes/beach.json", "scenes/b2.json", "scenes/water_overload.js
 
 
 # config_file = "scenes/city.json"
-# config_file = "scenes/flow_pass_sphere.json"
-config_file = "scenes/dam_break.json"
+config_file = "scenes/flow_pass_sphere.json"
+# config_file = "scenes/dam_break.json"
 # config_file = "scenes/wake.json"
 # config_file = "scenes/empty.json"
 
@@ -33,7 +33,7 @@ res_digits = 7
 
 res = 256
 gridx = 256
-gridy = 64
+gridy = 256
 gridz = 256
 
 # res = 64

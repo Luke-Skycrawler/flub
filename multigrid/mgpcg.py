@@ -6,11 +6,34 @@ from warp.utils import array_inner
 import math
 import numpy as np
 
+debug = True
+timer_active = True
+tile_size = 8
+tile_shape = (tile_size, tile_size, tile_size)
+
+# @wp.kernel
+# def reduce_array_tile(
+#     a: wp.array3d(dtype=float),
+#     b: wp.array3d(dtype=float),
+#     result: wp.array(dtype=float),
+# ):
+#     i, j, k = wp.tid()
+
+#     local_val = a[i, j, k]*b[i, j, k]
+
+#     t = wp.tile(local_val)
+#     s = wp.tile_sum(t)
+
+#     wp.tile_atomic_add(result, s)
+
+# def array_inner(x, y, result):
+#     result.zero_()
+#     wp.launch(reduce_array_tile, x.shape, inputs=[x, y, result])    
+
 @wp.kernel
 def _scale_by_3d(qf: wp.array3d(dtype=scalar), scale: scalar):
     i, j, k = wp.tid()
     qf[i, j, k] = qf[i, j, k] * scale
-
 
 @wp.func
 def neighbor_sum(x: wp.array3d(dtype = scalar), I: wp.vec3i) -> float: 
@@ -53,7 +76,10 @@ def _compute_divd(tag: wp.array3d(dtype = int), divd: wp.array3d(dtype = float))
     i, j, k = wp.tid()
     I = wp.vec3i(i, j, k)
     if tag[i, j, k] == 1:
-        divd[i, j, k] = float(neighbor_sum_tag(tag, I))
+        a = float(neighbor_sum_tag(tag, I))
+        if a > 0.0: 
+            a = 1.0 / a
+        divd[i, j, k] = a
     else:
         divd[i, j, k] = 0.0
 
@@ -80,10 +106,29 @@ def _smooth_mcadams(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar)
     I = wp.vec3i(i, j, k)
     # divd = float(neighbor_sum_tag(tag, I))
     divd = _divd[i, j, k]
-    if divd != 0.0:
-        z[i, j, k] = z[i, j, k] + (r[i, j, k] + neighbor_dot_tag(z, tag, I)) / divd
-    else:
-        z[i, j, k] = 0.0
+    z[i, j, k] += (r[i, j, k] + neighbor_dot_tag(z, tag, I)) * divd
+
+
+@wp.kernel
+def _smooth_mcadams_tiled(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), _divd: wp.array3d(dtype = scalar)):
+    i, j, k = wp.tid()
+
+    z_tile = wp.tile_load(z, shape = (tile_size, tile_size, tile_size), offset = (i * tile_size, j * tile_size, k * tile_size), storage = "register", bounds_check=False)
+    r_tile = wp.tile_load(r, shape = (tile_size, tile_size, tile_size), offset = (i * tile_size, j * tile_size, k * tile_size), storage = "register", bounds_check=False)
+    for d in range(3):
+        for ii in range(-1, 2, 2):
+            offset = wp.vec3i(i, j, k) * tile_size
+            offset[d] += ii
+            
+            tag_tile = wp.tile_load(tag, shape = (tile_size, tile_size, tile_size), offset = (offset[0], offset[1], offset[2]), storage = "register", bounds_check=True) & wp.tile_ones(shape = (tile_size, tile_size, tile_size), dtype = int)
+            zn_tile = wp.tile_load(z, shape = (tile_size, tile_size, tile_size), offset = (offset[0], offset[1], offset[2]), storage = "register", bounds_check=False)
+            
+            r_tile += wp.tile_astype(tag_tile, float) * (zn_tile - z_tile)
+
+    divd_tile = wp.tile_load(_divd, shape = (tile_size, tile_size, tile_size), offset = (i * tile_size, j * tile_size, k * tile_size), storage="register", bounds_check=False)
+
+    z_tile += r_tile * divd_tile
+    wp.tile_store(z, z_tile, offset = (i * tile_size, j * tile_size, k * tile_size))
 
 @wp.kernel
 def _restrict(r_h: wp.array3d(dtype = scalar), z_h: wp.array3d(dtype = scalar), r_2h: wp.array3d(dtype = scalar)):
@@ -118,23 +163,18 @@ def _prolongate(z_h: wp.array3d(dtype = scalar), z_2h: wp.array3d(dtype = scalar
 @wp.func
 def neighbor_dot_tag(x: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), I: wp.vec3i) -> float:
     ret = float(0.0)
-    for i in range(3):
-        offset = wp.vec3i(0, 0, 0)
-        offset[i] = 1
+    upper = wp.vec3i(x.shape[0] - 1, x.shape[1] - 1, x.shape[2] - 1)
+    lower = wp.vec3i(0, 0, 0)
 
-        upper = wp.vec3i(x.shape[0] - 1, x.shape[1] - 1, x.shape[2] - 1)
-        lower = wp.vec3i(0, 0, 0)
-        Ip = wp.min(upper, I + offset)
-        Im = wp.max(lower, I - offset)
-        
-
-        fp = wp.where(tag[Ip[0], Ip[1], Ip[2]] < 2, 1.0, 0.0)
-        fm = wp.where(tag[Im[0], Im[1], Im[2]] < 2, 1.0, 0.0)
-
-        xp = wp.where(tag[Ip[0], Ip[1], Ip[2]] == 0, 0.0, x[Ip[0], Ip[1], Ip[2]]) 
-        xm = wp.where(tag[Im[0], Im[1], Im[2]] == 0, 0.0, x[Im[0], Im[1], Im[2]])
-
-        ret += (xp - x[I[0], I[1], I[2]]) * fp + (xm - x[I[0], I[1], I[2]]) * fm
+    for d in range(3):
+        for ii in range(-1, 2, 2):
+            offset = wp.vec3i(0, 0, 0)
+            offset[d] = ii
+            Ip = wp.min(upper, I + offset)
+            Ip = wp.max(lower, Ip)
+            fp = wp.where(tag[Ip[0], Ip[1], Ip[2]] < 2, 1.0, 0.0)
+            xp = wp.where(tag[Ip[0], Ip[1], Ip[2]] == 0, 0.0, x[Ip[0], Ip[1], Ip[2]]) 
+            ret += (xp - x[I[0], I[1], I[2]]) * fp
 
     if tag[I[0], I[1], I[2]] != 1:
         ret = 0.0
@@ -236,7 +276,7 @@ class MGPCG:
         
         self.n_mg_levels = n_mg_levels
         self.pre_and_post_smoothing = 6
-        self.bottom_smoothing = 6
+        self.bottom_smoothing = 32
         self.dim = dim
         self.real = real
 
@@ -284,6 +324,9 @@ class MGPCG:
         wp.launch(_scale_by_3d, dim = self.shape, inputs = [self.r[0], k])
 
     def graph_precondition(self, smoother = "default"):
+        if timer_active: 
+            self.apply_preconditioner(smoother)
+            return
         assert smoother in ["default", "phases", "fraction"]
         # self.apply_preconditioner(smoother)
         if self.graphs[smoother] is None:
@@ -301,52 +344,74 @@ class MGPCG:
         for l in range(self.n_mg_levels - 1):
             shapel = self.r[l].shape
             shape_call = (shapel[0], shapel[1], shapel[2] // 2)
-            for i in range(self.pre_and_post_smoothing << l):
+
+            with wp.ScopedTimer(f"MG level {l} smoother {smoother}", active = timer_active, synchronize=True):
+                for i in range(self.pre_and_post_smoothing << l):
+                    if smoother == "default":
+                        wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
+                        wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
+                    else:
+                        if not debug: 
+                            wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
+                            wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
+                        else:
+                            shape_call_tiled = (shapel[0] // tile_size, shapel[1] // tile_size, shapel[2] // tile_size)
+                            wp.launch_tiled(_smooth_mcadams_tiled, dim = shape_call_tiled, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l]], block_dim = 64)
+
+            self.z[l + 1].zero_()
+            self.r[l + 1].zero_()
+            with wp.ScopedTimer(f"MG level {l} restrict {smoother}", active = timer_active):
+                if smoother == "default":
+                    wp.launch(_restrict, dim = self.r[l].shape, inputs = [self.r[l], self.z[l], self.r[l + 1]])
+                else: 
+                    wp.launch(_restrict_mcadams, dim = self.r[l].shape, inputs = [self.r[l], self.z[l], self.tag[l], self.r[l + 1], self.tag[l + 1]])
+            
+        l = self.n_mg_levels - 1
+        shapel = self.r[l].shape
+        shape_call = (shapel[0], shapel[1], shapel[2] // 2)
+
+        with wp.ScopedTimer(f"MG level {l} bottom smoother {smoother}", active = timer_active, synchronize=True):
+            for i in range(self.bottom_smoothing // 2):
                 if smoother == "default":
                     wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
                     wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
                 else:
-                    wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
-                    wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
+                    if not debug: 
+                        wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
+                        wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
+                    else:
+                        shape_call_tiled = (shapel[0] // tile_size, shapel[1] // tile_size, shapel[2] // tile_size)
+                        wp.launch_tiled(_smooth_mcadams_tiled, dim = shape_call_tiled, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l]], block_dim = 64)
 
-            self.z[l + 1].zero_()
-            self.r[l + 1].zero_()
-            if smoother == "default":
-                wp.launch(_restrict, dim = self.r[l].shape, inputs = [self.r[l], self.z[l], self.r[l + 1]])
-            else: 
-                wp.launch(_restrict_mcadams, dim = self.r[l].shape, inputs = [self.r[l], self.z[l], self.tag[l], self.r[l + 1], self.tag[l + 1]])
-        
-        l = self.n_mg_levels - 1
-        shapel = self.r[l].shape
-        shape_call = (shapel[0], shapel[1], shapel[2] // 2)
-        for i in range(self.bottom_smoothing // 2):
-            if smoother == "default":
-                wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
-                wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
-            else:
-                wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
-                wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
-
-        for i in range(self.bottom_smoothing // 2):
-            if smoother == "default":
-                wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
-                wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
-            else:
-                wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
-                wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
+            for i in range(self.bottom_smoothing // 2):
+                if smoother == "default":
+                    wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
+                    wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
+                else:
+                    if not debug:
+                        wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
+                        wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
+                    else: 
+                        shape_call_tiled = (shapel[0] // tile_size, shapel[1] // tile_size, shapel[2] // tile_size)
+                        wp.launch_tiled(_smooth_mcadams_tiled, dim = shape_call_tiled, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l]], block_dim = 64)
 
         for l in reversed(range(self.n_mg_levels - 1)):
             wp.launch(_prolongate, dim = self.z[l].shape, inputs = [self.z[l], self.z[l + 1]])
 
             shapel = self.r[l].shape
             shape_call = (shapel[0], shapel[1], shapel[2] // 2)
-            for i in range(self.pre_and_post_smoothing << l):
-                if smoother == "default":
-                    wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
-                    wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
-                else:
-                    wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
-                    wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
+            with wp.ScopedTimer(f"MG level {l} prolongate smoother {smoother}", active = timer_active, synchronize=True):
+                for i in range(self.pre_and_post_smoothing << l):
+                    if smoother == "default":
+                        wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 1])
+                        wp.launch(_smooth, dim = self.r[l].shape, inputs = [self.z[l], self.r[l], 0])
+                    else:
+                        if not debug:
+                            wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 1])
+                            wp.launch(_smooth_mcadams, dim = shape_call, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l], 0])
+                        else: 
+                            shape_call_tiled = (shapel[0] // tile_size, shapel[1] // tile_size, shapel[2] // tile_size)
+                            wp.launch_tiled(_smooth_mcadams_tiled, dim = shape_call_tiled, inputs = [self.z[l], self.r[l], self.tag[l], self.divd[l]], block_dim = 64)
         
     def update_p(self):
         wp.launch(_update_p, dim = self.shape, inputs = [self.p, self.z[0], self.beta])
@@ -375,7 +440,7 @@ class MGPCG:
     def update_beta(self, eps): 
         wp.launch(_update_beta, dim = (1), inputs = [self.sum, self.old_zTr, self.beta, eps])
 
-    def solve(self, max_iters = 1, eps = 1e-12, abs_tol = 1e-12, rel_tol = 1e-12, verbose = False, smoother = "default"):
+    def solve(self, max_iters = 1, eps = 0.0, abs_tol = 1e-12, rel_tol = 1e-12, verbose = False, smoother = "default"):
         """
         Solve a Poisson problem.
 
@@ -385,8 +450,8 @@ class MGPCG:
         :parameter rel_tol: Specify the tolerance of loss relative to initial loss.
         """
 
-        if smoother != "phases":
-            self.zero_centered()
+        # if smoother != "phases":
+        #     self.zero_centered()
         
         array_inner(self.r[0], self.r[0], self.sum)
         initial_rTr = self.sum.numpy()[0]
@@ -404,30 +469,32 @@ class MGPCG:
         # initial_r = self.r[0].numpy()
         it = 0
         while max_iters == -1 or it < max_iters:
+            with wp.ScopedTimer(f"PCG iter {it} smoother {smoother}", active = timer_active, synchronize=True):
+                if smoother == "default":
+                    # compute_Ap(self.Ap, self.p)
+                    wp.launch(compute_Ap, dim = self.shape, inputs = [self.Ap, self.p])
+                
+                else: 
+                    # compute_Ap_mcadams(self.Ap, self.p, self.tag[0])
+                    wp.launch(compute_Ap_mcadams, dim = self.shape, inputs = [self.Ap, self.p, self.tag[0]] )
+                
+                array_inner(self.p, self.Ap, self.sum)
+                # pAp = self.sum.numpy()[0]
+                # self.alpha.fill_(old_zTr / (pAp + eps))
+                self.update_alpha(eps)
+                
+                self.update_r()
 
-            if smoother == "default":
-                # compute_Ap(self.Ap, self.p)
-                wp.launch(compute_Ap, dim = self.shape, inputs = [self.Ap, self.p])
-            
-            else: 
-                # compute_Ap_mcadams(self.Ap, self.p, self.tag[0])
-                wp.launch(compute_Ap_mcadams, dim = self.shape, inputs = [self.Ap, self.p, self.tag[0]] )
-            
-            array_inner(self.p, self.Ap, self.sum)
-            # pAp = self.sum.numpy()[0]
-            # self.alpha.fill_(old_zTr / (pAp + eps))
-            self.update_alpha(eps)
-            
-            self.update_r()
+                # if smoother != "phases":
+                #     self.zero_centered()
+                
 
-            if smoother != "phases":
-                self.zero_centered()
-            
-
-            array_inner(self.r[0], self.r[0], self.sum)
-            rTr = self.sum.numpy()[0]
+                array_inner(self.r[0], self.r[0], self.sum)
+                rTr = self.sum.numpy()[0]
 
             if verbose:
+                if it == 0:
+                    print(f"initial |residual|_2={math.sqrt(initial_rTr)}")
                 print(f"after iter {it + 1}, |residual|_2={math.sqrt(rTr)}")
                 # if rTr > old_rTr * 2:
                 if False:

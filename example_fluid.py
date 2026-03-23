@@ -91,7 +91,7 @@ class Example:
         wp.launch(mask_with_tag, dim = shape, inputs = [self.div, self.tag])
 
         wp.launch(scale_by_3d, dim = shape, inputs = [self.div, -1.0 / h])
-        print("L inf u div = ", np.max(self.div.f.numpy()))
+        # print("L inf u div = ", np.max(self.div.f.numpy()))
  
     def Dh(self):
         rc = self.rc

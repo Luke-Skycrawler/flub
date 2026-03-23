@@ -79,6 +79,7 @@ class PSViewer:
 
 
 if __name__ == "__main__":
+    wp.config.max_unroll = 4
     wp.init()
     water = config_file in water_config
     save_nvdb = write_npy
