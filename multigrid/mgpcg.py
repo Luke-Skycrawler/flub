@@ -1,21 +1,19 @@
 import warp as wp
 # from ..utils.util import scale_by_3d
-# from typing import Any
-Any = float
-# int8 = int
-int8 = wp.int8
+scalar = float
+# int = wp.int
 from warp.utils import array_inner
 import math
 import numpy as np
 
 @wp.kernel
-def _scale_by_3d(qf: wp.array3d(dtype=Any), scale: Any):
+def _scale_by_3d(qf: wp.array3d(dtype=scalar), scale: scalar):
     i, j, k = wp.tid()
     qf[i, j, k] = qf[i, j, k] * scale
 
 
 @wp.func
-def neighbor_sum(x: wp.array3d(dtype = Any), I: wp.vec3i) -> float: 
+def neighbor_sum(x: wp.array3d(dtype = scalar), I: wp.vec3i) -> float: 
     ret = float(0.0)
     for i in range(3):
         offset = wp.vec3i(0, 0, 0)
@@ -30,18 +28,18 @@ def neighbor_sum(x: wp.array3d(dtype = Any), I: wp.vec3i) -> float:
     return ret
 
 @wp.kernel
-def compute_Ap(Ap: wp.array3d(dtype = Any), p: wp.array3d(dtype = Any)):
+def compute_Ap(Ap: wp.array3d(dtype = scalar), p: wp.array3d(dtype = scalar)):
     i, j, k = wp.tid()
     Ap[i, j, k] = neighbor_sum(p, wp.vec3i(i, j, k))
     # Ap[i, j, k] = p[i, j, k]
 
 @wp.kernel
-def compute_Ap_mcadams(Ap: wp.array3d(dtype = Any), p: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8)):
+def compute_Ap_mcadams(Ap: wp.array3d(dtype = scalar), p: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int)):
     i, j, k = wp.tid()
     Ap[i, j, k] = neighbor_dot_tag(p, tag, wp.vec3i(i, j, k))
 
 @wp.kernel
-def _smooth(z: wp.array3d(dtype = Any), r: wp.array3d(dtype = Any), phase: int):
+def _smooth(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar), phase: int):
     i, j, k = wp.tid()
     res = r.shape[0]
     divdx = wp.where(i == 0 or i == res - 1, 1.0, 2.0)
@@ -51,7 +49,7 @@ def _smooth(z: wp.array3d(dtype = Any), r: wp.array3d(dtype = Any), phase: int):
         z[i, j, k] = z[i, j, k] + (r[i, j, k] + neighbor_sum(z, wp.vec3i(i, j, k))) / (divdx + divdy + divdz)
 
 @wp.kernel
-def _compute_divd(tag: wp.array3d(dtype = int8), divd: wp.array3d(dtype = float)):
+def _compute_divd(tag: wp.array3d(dtype = int), divd: wp.array3d(dtype = float)):
     i, j, k = wp.tid()
     I = wp.vec3i(i, j, k)
     if tag[i, j, k] == 1:
@@ -60,7 +58,7 @@ def _compute_divd(tag: wp.array3d(dtype = int8), divd: wp.array3d(dtype = float)
         divd[i, j, k] = 0.0
 
 # @wp.kernel
-# def _smooth_mcadams(z: wp.array3d(dtype = Any), r: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), _divd: wp.array3d(dtype = Any), phase: int):
+# def _smooth_mcadams(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), _divd: wp.array3d(dtype = scalar), phase: int):
 #     i, j, k = wp.tid()
 #     if (i + j + k) & 1 == phase:
 #         I = wp.vec3i(i, j, k)
@@ -72,7 +70,7 @@ def _compute_divd(tag: wp.array3d(dtype = int8), divd: wp.array3d(dtype = float)
 #             z[i, j, k] = 0.0
 
 @wp.kernel
-def _smooth_mcadams(z: wp.array3d(dtype = Any), r: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), _divd: wp.array3d(dtype = Any), phase: int):
+def _smooth_mcadams(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), _divd: wp.array3d(dtype = scalar), phase: int):
     i, j, _k = wp.tid()
     if (i + j) & 1 == phase:
         k = _k * 2 + 1
@@ -88,13 +86,13 @@ def _smooth_mcadams(z: wp.array3d(dtype = Any), r: wp.array3d(dtype = Any), tag:
         z[i, j, k] = 0.0
 
 @wp.kernel
-def _restrict(r_h: wp.array3d(dtype = Any), z_h: wp.array3d(dtype = Any), r_2h: wp.array3d(dtype = Any)):
+def _restrict(r_h: wp.array3d(dtype = scalar), z_h: wp.array3d(dtype = scalar), r_2h: wp.array3d(dtype = scalar)):
     i, j, k = wp.tid()
     res = r_h[i, j, k] - ( - neighbor_sum(z_h, wp.vec3i(i, j, k)))
     wp.atomic_add(r_2h, i // 2, j // 2, k // 2, res)
 
 @wp.kernel
-def _restrict_mcadams(r_h: wp.array3d(dtype = Any), z_h: wp.array3d(dtype = Any), tag_h: wp.array3d(dtype = int8), r_2h: wp.array3d(dtype = Any), tag_2h: wp.array3d(dtype = int8)):
+def _restrict_mcadams(r_h: wp.array3d(dtype = scalar), z_h: wp.array3d(dtype = scalar), tag_h: wp.array3d(dtype = int), r_2h: wp.array3d(dtype = scalar), tag_2h: wp.array3d(dtype = int)):
     i, j, k = wp.tid()
     res = r_h[i, j, k] - ( - neighbor_dot_tag(z_h, tag_h, wp.vec3i(i, j, k)))
     if tag_2h[i // 2, j // 2, k // 2] == 1:
@@ -103,7 +101,7 @@ def _restrict_mcadams(r_h: wp.array3d(dtype = Any), z_h: wp.array3d(dtype = Any)
         r_2h[i // 2, j // 2, k // 2] = 0.0
 
 @wp.kernel
-def _restrict_mcadams_int(r_h: wp.array3d(dtype = Any), z_h: wp.array3d(dtype = Any), tag_h: wp.array3d(dtype = int), r_2h: wp.array3d(dtype = Any), tag_2h: wp.array3d(dtype = int)):
+def _restrict_mcadams_int(r_h: wp.array3d(dtype = scalar), z_h: wp.array3d(dtype = scalar), tag_h: wp.array3d(dtype = int), r_2h: wp.array3d(dtype = scalar), tag_2h: wp.array3d(dtype = int)):
     i, j, k = wp.tid()
     res = r_h[i, j, k]# - ( - neighbor_dot_tag(z_h, tag_h, wp.vec3i(i, j, k)))
     if tag_2h[i // 2, j // 2, k // 2] == 1:
@@ -113,12 +111,12 @@ def _restrict_mcadams_int(r_h: wp.array3d(dtype = Any), z_h: wp.array3d(dtype = 
 
 
 @wp.kernel
-def _prolongate(z_h: wp.array3d(dtype = Any), z_2h: wp.array3d(dtype = Any)):
+def _prolongate(z_h: wp.array3d(dtype = scalar), z_2h: wp.array3d(dtype = scalar)):
     i, j, k = wp.tid()
     z_h[i, j, k] = z_h[i, j, k] + z_2h[i // 2, j // 2, k // 2]
 
 @wp.func
-def neighbor_dot_tag(x: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), I: wp.vec3i) -> float:
+def neighbor_dot_tag(x: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), I: wp.vec3i) -> float:
     ret = float(0.0)
     for i in range(3):
         offset = wp.vec3i(0, 0, 0)
@@ -144,7 +142,7 @@ def neighbor_dot_tag(x: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), 
     return ret
 
 @wp.func
-def neighbor_sum_tag(tag: wp.array3d(dtype = int8), I: wp.vec3i) -> int:
+def neighbor_sum_tag(tag: wp.array3d(dtype = int), I: wp.vec3i) -> int:
     ret = int(0)
     for i in range(3):
         offset = wp.vec3i(0, 0, 0)
@@ -162,7 +160,7 @@ def neighbor_sum_tag(tag: wp.array3d(dtype = int8), I: wp.vec3i) -> int:
     return ret
 
 @wp.kernel
-def restrict_tag(tag_h: wp.array3d(dtype = int8), tag_2h: wp.array3d(dtype = int8)):
+def restrict_tag(tag_h: wp.array3d(dtype = int), tag_2h: wp.array3d(dtype = int)):
     i, j, k = wp.tid()
     t = int(2)
     for ii in range(2):
@@ -173,7 +171,7 @@ def restrict_tag(tag_h: wp.array3d(dtype = int8), tag_2h: wp.array3d(dtype = int
                     t = 0
                 elif t > 0 and tag == 1:
                     t = 1
-    tag_2h[i, j, k] = int8(t)
+    tag_2h[i, j, k] = int(t)
 
 @wp.kernel
 def restrict_tag_int(tag_h: wp.array3d(dtype = int), tag_2h: wp.array3d(dtype = int)):
@@ -191,14 +189,14 @@ def restrict_tag_int(tag_h: wp.array3d(dtype = int), tag_2h: wp.array3d(dtype = 
 
 
 @wp.kernel
-def _mean(qf: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), sum: wp.array1d(dtype = Any), n_avg: wp.array1d(dtype = int)):
+def _mean(qf: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), sum: wp.array1d(dtype = scalar), n_avg: wp.array1d(dtype = int)):
     i, j, k = wp.tid()
     if tag[i, j, k] == 1:
         wp.atomic_add(sum, 0, qf[i, j, k])
         wp.atomic_add(n_avg, 0, 1)
     
 @wp.kernel
-def _sub(qf: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), sum: wp.array1d(dtype = Any), n_avg: wp.array1d(dtype = int)):
+def _sub(qf: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), sum: wp.array1d(dtype = scalar), n_avg: wp.array1d(dtype = int)):
     mean = sum[0] / float(n_avg[0])
     i, j, k = wp.tid()
     if tag[i, j, k] == 1:
@@ -207,7 +205,7 @@ def _sub(qf: wp.array3d(dtype = Any), tag: wp.array3d(dtype = int8), sum: wp.arr
         qf[i, j, k] = 0.0
 
 @wp.kernel
-def _update_x(x: wp.array3d(dtype = Any), p: wp.array3d(dtype = Any), alpha: wp.array1d(dtype = Any)):
+def _update_x(x: wp.array3d(dtype = scalar), p: wp.array3d(dtype = scalar), alpha: wp.array1d(dtype = scalar)):
     i, j, k = wp.tid()
     x[i, j, k] = x[i, j, k] + alpha[0] * p[i, j, k]
 
@@ -224,12 +222,12 @@ def _update_beta(sum: wp.array1d(dtype = float), old_zTr: wp.array1d(dtype = flo
     old_zTr[0] = new_zTr
 
 @wp.kernel
-def _update_r(r: wp.array3d(dtype = Any), Ap: wp.array3d(dtype = Any), alpha: wp.array1d(dtype = Any)):
+def _update_r(r: wp.array3d(dtype = scalar), Ap: wp.array3d(dtype = scalar), alpha: wp.array1d(dtype = scalar)):
     i, j, k = wp.tid()
     r[i, j, k] = r[i, j, k] - alpha[0] * Ap[i, j, k]
 
 @wp.kernel
-def _update_p(p: wp.array3d(dtype = Any), z: wp.array3d(dtype = Any), beta: wp.array1d(dtype = Any)):
+def _update_p(p: wp.array3d(dtype = scalar), z: wp.array3d(dtype = scalar), beta: wp.array1d(dtype = scalar)):
     i, j, k = wp.tid()
     p[i, j, k] = z[i, j, k] + beta[0] * p[i, j, k]
 
@@ -255,7 +253,7 @@ class MGPCG:
 
             _shape = (shape[0] // 2 ** l, shape[1] // 2 ** l, shape[2] // 2 ** l)
             self.r.append(wp.empty(_shape, dtype=self.real))  # residual
-            self.tag.append(wp.empty(_shape, dtype=int8))  # tag
+            self.tag.append(wp.empty(_shape, dtype=int))  # tag
             self.z.append(wp.empty(_shape, dtype=self.real))  
             self.divd.append(wp.empty(_shape, dtype = self.real))
         
@@ -362,9 +360,7 @@ class MGPCG:
     def set_tags(self, tag = None):
         finest = 0
         if tag is not None:
-            tagnp = tag.numpy()
-            tagwp = wp.from_numpy(tagnp, dtype = int8, shape = self.tag[0].shape)
-            wp.copy(self.tag[finest], tagwp)
+            wp.copy(self.tag[finest], tag)
 
         wp.launch(_compute_divd, dim = self.divd[finest].shape, inputs = [self.tag[finest], self.divd[finest]])
 
@@ -495,7 +491,7 @@ class MGPCG:
 
 @wp.kernel
 def _mask_interior(
-    tag: wp.array3d(dtype = int8),
+    tag: wp.array3d(dtype = int),
     r: wp.array3d(dtype = float)
 ):
     i, j, k = wp.tid()
@@ -508,12 +504,12 @@ def _init_test(r: wp.array3d(dtype = float), N: int):
     r[i, j, k] = wp.cos(5.0 * wp.pi * float(i) / float(N)) * wp.cos(5.0 * wp.pi * float(j) / float(N)) * wp.cos(5.0 * wp.pi * float(k) / float(N))
 
 @wp.kernel
-def _fill_half(tag: wp.array3d(dtype = int8), r: wp.array3d(dtype = float)): 
+def _fill_half(tag: wp.array3d(dtype = int), r: wp.array3d(dtype = float)): 
     i, j, k = wp.tid()
     if j < tag.shape[1] // 2:
-        tag[i, j, k] = int8(1)
+        tag[i, j, k] = int(1)
     else:
-        tag[i, j, k] = int8(0)
+        tag[i, j, k] = int(0)
         r[i, j, k] = 0.0
 
 class MGPCG_Debug(MGPCG):
