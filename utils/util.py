@@ -429,18 +429,17 @@ def exclude_rigid_phi(
         phi_water.f[i, j, k] = - phi_rigid.f[i, j, k]
 
 @wp.kernel
-def set_unknown_3d(
+def set_unknown(
     phi: Field,
-    tag: MACGridInt
+    tags: MACGridInt
 ):
     i, j, k = wp.tid()
     pc = phi.f[i, j, k]
     if pc >= 0.0:
-        tag.u.f[i, j, k] = 1
-        tag.v.f[i, j, k] = 1
-        tag.w.f[i, j, k] = 1
+        tags.u.f[i, j, k] = 1
+        tags.v.f[i, j, k] = 1
+        tags.w.f[i, j, k] = 1
     else:
-        tag.u.f[i, j, k] = 0
-        tag.u.f[i, j, k] = 0
-        tag.u.f[i, j, k] = 0
-
+        tags.u.f[i, j, k] = 0
+        tags.v.f[i, j, k] = 0
+        tags.w.f[i, j, k] = 0

@@ -1,11 +1,9 @@
 from const_param import *
 from example_fluid import Example
 from advect import advect_phi, advect_uv_mc
-from subtract_gradient import u_subtract_gradient_batty_3d, v_subtract_gradient_batty_3d, w_subtract_gradient_batty_3d, subtract_gradient_tag
-from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, exclude_rigid_phi, set_unknown_3d
+from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, exclude_rigid_phi, set_unknown_3d, set_unknown
 from adjustable import integrate_3d, set_phi_3d
 from extrapolate import extrapolate_by_1
-from divergence import divergence_fractional_3d, invalidate, mask_with_tag, divergence_tag
 from particles import ParticleSystem
 from rigid_coupling import RigidCoupling
 import numpy as np
@@ -79,8 +77,7 @@ class WaterExample3d(Example):
             wp.launch(scale_by_3d, dim = shape, inputs = [pf, h0])
 
     def extrapolate(self, n_cells = 16 * res // 128):
-        wp.launch(set_unknown_3d, dim=self.phi0.f.shape, inputs=[
-            self.phi0, self.vel_owner])
+        wp.launch(set_unknown, dim = shape, inputs = [self.phi0, self.vel_owner])
         for _ in range(n_cells):
             extrapolate_by_1(self.vel0, self.vel_owner)
 
