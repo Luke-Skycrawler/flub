@@ -10,21 +10,6 @@ from typing import List
 rho = 1.0
 
 @wp.kernel
-def compute_rigid_phi(
-    x: wp.array1d(dtype = wp.vec3),
-    q: wp.array1d(dtype = wp.quat),
-    geometry: wp.array1d(dtype = GeometryType3D),
-    phi: Field, include_static: int
-):
-    '''NOTE: also include ignore static object option'''
-    i, j, k = wp.tid()
-    u = (float(i) + 0.5) * h0 
-    v = (float(j) + 0.5) * h0 
-    w = (float(k) + 0.5) * h0 
-    phiijk, tag = sdf_argmin_3d(u, v, w, x, q, geometry, include_static)
-    phi.f[i, j, k] = phiijk
-
-@wp.kernel
 def reset_kernel(
     trans: wp.array1d(dtype = wp.transform), 
     transd: wp.array1d(dtype = wp.spatial_vector),
@@ -36,81 +21,6 @@ def reset_kernel(
     i = wp.tid()
     trans[i] = wp.transform(x[i], q[i])
     transd[i] = wp.spatial_vector(omega[i], v[i]) 
-
-@wp.kernel
-def set_state(
-    x: wp.array1d(dtype = wp.vec3),
-    q: wp.array1d(dtype = wp.quat),
-    v: wp.array1d(dtype = wp.vec3),
-    omega: wp.array1d(dtype = wp.vec3),
-    trans: wp.array1d(dtype = wp.transform),
-    transd: wp.array1d(dtype = wp.spatial_vector)
-):
-    i = wp.tid()
-    x[i] = wp.transform_get_translation(trans[i])
-    q[i] = wp.transform_get_rotation(trans[i])
-    omega[i] = wp.vec3(transd[i][0], transd[i][1], transd[i][2])
-    v[i] = wp.vec3(transd[i][3], transd[i][4], transd[i][5])
-
-@wp.kernel
-def set_state_to_solver(
-    x: wp.array1d(dtype = wp.vec3),
-    q: wp.array1d(dtype = wp.quat),
-    trans: wp.array1d(dtype = wp.transform)
-):
-    i = wp.tid()
-    trans[i] = wp.transform(x[i], q[i])
-
-@wp.kernel
-def set_velocity(
-    x: wp.array1d(dtype = wp.vec3), 
-    q: wp.array1d(dtype = wp.quat),
-    x_nxt: wp.array1d(dtype = wp.vec3),
-    q_nxt: wp.array1d(dtype = wp.quat),
-    v: wp.array1d(dtype = wp.vec3),
-    omega: wp.array1d(dtype = wp.vec3),
-    dt: float
-):
-    i =  wp.tid()
-    v[i] = (x_nxt[i] - x[i]) / dt
-    q1 = q[i]
-    q2 = q_nxt[i]
-    
-    omega[i] = (2.0 / dt) * wp.vec3(
-        q1[3] * q2[0] - q1[0] * q2[3] + q1[1] * q2[2] - q1[2] * q2[1],
-        q1[3] * q2[1] + q1[0] * q2[2] - q1[1] * q2[3] - q1[2] * q2[0],
-        q1[3] * q2[2] - q1[0] * q2[1] + q1[1] * q2[0] - q1[2] * q2[3])
-
-@wp.kernel
-def set_v_to_solver(
-    v: wp.array1d(dtype = wp.vec3),
-    omega: wp.array1d(dtype = wp.vec3),
-    transd: wp.array1d(dtype = wp.spatial_vector)
-):
-    i = wp.tid()
-    transd[i] = wp.spatial_vector(
-        omega[i][0], omega[i][1], omega[i][2],
-        v[i][0], v[i][1], v[i][2]
-    )
-    
-@wp.kernel
-def get_xform(
-    x: wp.array1d(dtype = wp.vec3),
-    q: wp.array1d(dtype = wp.quat),
-    m: wp.array1d(dtype = wp.mat44)
-):
-    i = wp.tid()
-    # m33 = wp.mat33()
-    # wp.quat_to_matrix(q[i], m33)
-    # t = x[i]
-    # xform = wp.transform(x[i], q[i])
-    # m[i] = wp.
-    # m[i] = wp.mat44.
-    # m[i] = wp.mat44.from_trs(x[i], theta[i])
-    xi = x[i]# - wp.vec3(0.5, 0.0, 0.5)
-
-    m[i] = wp.transform_compose(xi, q[i], wp.vec3(1.0, 1.0, 1.0))
-
 
 @wp.kernel
 def initialize_solid_3d(
@@ -137,25 +47,6 @@ def initialize_solid_3d(
         v[i] = wp.vec3(0.0, 0.0, 0.0)
 
 
-# @wp.kernel
-# def _precompute_solid_vel_u_3d(
-#         x: wp.array1d(dtype=wp.vec3),
-#         v: wp.array1d(dtype=wp.vec3),
-#         omega: wp.array1d(dtype=wp.vec3),
-#         u_rigid: wp.array3d(dtype=float),
-#         u_owner: wp.array3d(dtype=int)):
-
-#     eps = h0 * 0.01
-#     i, j, k = wp.tid()
-#     owner = u_owner[i, j, k]
-#     tmp = float(i) * h0
-#     if eps < tmp and tmp < 1.0 - eps and owner != -1:
-#         pos = wp.vec3(float(i) * h0, (float(j) + 0.5) * h0, (float(k) + 0.5) * h0)
-#         u_rigid[i, j, k] = compute_v_solid_3d(
-#             pos, x[owner], v[owner], omega[owner])[0]
-#     else:
-#         u_rigid[i, j, k] = v_inflow
-#         # u_rigid[i, j, k] = 0.0
 
 @wp.kernel
 def precompute_solid_vel(
@@ -178,69 +69,6 @@ def precompute_solid_vel(
     else:
         u_rigid.f[i, j, k] = 0.0
 
-# @wp.kernel
-# def _precompute_solid_vel_v_3d(
-#         x: wp.array1d(dtype=wp.vec3),
-#         v: wp.array1d(dtype=wp.vec3),
-#         omega: wp.array1d(dtype=wp.vec3),
-#         v_rigid: wp.array3d(dtype=float),
-#         v_owner: wp.array3d(dtype=int),
-#         l: float, b: float, f: float, h: float):
-#     eps = h0 * 0.01
-#     i, j, k = wp.tid()
-#     owner = v_owner[i, j, k]
-#     tmp = float(j) * h0 + b
-#     if eps < tmp and tmp < h0 * float(gridy) - eps and owner != -1:
-#         pos = wp.vec3(l + (float(i) + 0.5) * h, b + float(j) * h, f + (float(k) + 0.5) * h)
-#         v_rigid[i, j, k] = compute_v_solid_3d(
-#             pos, x[owner], v[owner], omega[owner])[1]
-#     else:
-#         v_rigid[i, j, k] = 0.0
-# @wp.kernel
-# def _precompute_solid_vel_w_3d(
-#         x: wp.array1d(dtype=wp.vec3),
-#         v: wp.array1d(dtype=wp.vec3),
-#         omega: wp.array1d(dtype=wp.vec3),
-#         w_rigid: wp.array3d(dtype=float),
-#         w_owner: wp.array3d(dtype=int),
-#         l: float, b: float, f: float, h: float):
-#     eps = h0 * 0.01
-#     i, j, k = wp.tid()
-#     owner = w_owner[i, j, k]
-#     tmp = float(k) * h + f
-#     if eps < tmp and tmp < h0 * float(gridz) - eps and owner != -1:
-#         pos = wp.vec3(l + (float(i) + 0.5) * h, b + (float(j) + 0.5) * h, f + float(k) * h)
-#         w_rigid[i, j, k] = compute_v_solid_3d(
-#             pos, x[owner], v[owner], omega[owner])[2]
-#     else:
-#         w_rigid[i, j, k] = 0.0
-
-
-@wp.kernel
-def compute_forces_3d(
-    pf: wp.array3d(dtype=float), 
-    x: wp.array1d(dtype=wp.vec3), 
-    fu: wp.array3d(dtype=float), 
-    fv: wp.array3d(dtype=float), 
-    fw: wp.array3d(dtype=float),
-    tag: wp.array3d(dtype=int),
-
-    force: wp.array1d(dtype = wp.vec3), 
-    torque: wp.array1d(dtype = wp.vec3),
-    l: float, b: float, f: float, h: float
-):
-    i, j, k = wp.tid()
-    n_rigids = force.shape[0]
-    for ii in range(n_rigids):
-        if is_cutcell_3d(i, j, k, fu, fv, fw) and (ii == tag[i, j, k]):
-            delta_f = pf[i, j, k] * \
-                wp.vec3(
-                    fu[i, j, k] - fu[i + 1, j, k],
-                    fv[i, j, k] - fv[i, j + 1, k],
-                    fw[i, j, k] - fw[i, j, k + 1]
-                ) * (h * h)
-            wp.atomic_add(force, ii, delta_f)
-            wp.atomic_add(torque, ii, wp.cross(wp.vec3(float(i) + 0.5, float(j) + 0.5, float(k) + 0.5) * h + wp.vec3(l, b, f) - x[ii], delta_f))
 
 @wp.kernel
 def integrate_pressure_forces(
@@ -284,74 +112,6 @@ def integrate_pressure_forces(
     force[ii] = a / dt
     torque[ii] = beta / dt
 
-@wp.kernel
-def integrate_single_pressure_force(
-    geometry: wp.array1d(dtype = GeometryType3D),
-    v:  wp.array1d(dtype = wp.vec3),
-    omega: wp.array1d(dtype = wp.vec3),
-    force: wp.array1d(dtype = wp.vec3),
-    torque: wp.array1d(dtype = wp.vec3),
-    ii: int
-):
-    '''NOTE: no gravitational force in the integrand'''
-    # _radius = rigid_geometry[ii].radius[0]
-    # FIXME: fails if we use geometry
-    # radius = radius0
-    radius = geometry[ii].radius[0]
-    geo = geometry[ii].geometry
-    df = force[ii]
-    tau = torque[ii]
-    rho = geometry[ii].rho
-
-    a = df / ((radius * 2.0) ** 3.0 * rho)
-    beta = tau / ((radius) ** 5.0 * 8.0 * rho * 2.0 / 3.0)
-    # 2 / 3 for a cube 
-
-    # FIXME: rotate the I by q
-    # diag = (radius) ** 4.0 * 4 * rho * 2.0 / 3.0
-    # beta = tau * h ** 3.0 / wp.diag(wp.vec3(diag, diag, diag))
-
-    if geo == 5 and geometry[ii].volume > 0.0:
-        a = df / (geometry[ii].volume * rho)
-        beta = tau / ((radius ** 2.0) * geometry[ii].volume * rho * 2.0 / 3.0)
-    elif geo == 5 and geometry[ii].volume < 0.0:
-        a = wp.vec3(0.0, 0.0, 0.0)
-        beta = wp.vec3(0.0, 0.0, 0.0)
-
-    if geometry[ii].volume < 0.0:
-        a = wp.vec3(0.0, 0.0, 0.0)
-        beta = wp.vec3(0.0, 0.0, 0.0)
-
-    v[ii] = v[ii] + a    
-    omega[ii] = omega[ii] + beta
-
-    force[ii] = a / dt
-    torque[ii] = beta / dt
-
-
-@wp.kernel
-def _integrate_ext_forces(
-    v: wp.array1d(dtype = wp.vec3),
-    geometry: wp.array1d(dtype = GeometryType3D)
-):
-    f_g = wp.vec3(0.0, -gravity, 0.0) * 1.0# * rho[i, j, k]
-    i = wp.tid()
-    if geometry[i].volume > 0.0:
-        v[i] = v[i] + f_g * dt
-
-@wp.kernel
-def override(
-    v: wp.array1d(dtype = wp.vec3),
-    omega: wp.array1d(dtype = wp.vec3),
-    vel: float,
-    i: int
-): 
-    v[i] = wp.vec3(0.0, vel, 0.0)
-    omega[i] = wp.vec3(0.0, 0.0, 0.0)
-
-
-
-
 class RigidCoupling:
     def __init__(self):
         # builder = sim.ModelBuilder(gravity = -gravity)
@@ -386,13 +146,6 @@ class RigidCoupling:
         self.time = 0.0
 
         self.reset()
-        
-    def set_levelset_res(self):
-        '''decide the resolution of the levelset according to the finest patch'''
-        finest = 0.5
-        for so in self.scene.scene_objects:
-            finest = min(finest, so.patch_config.h_multiply)
-        return finest * h0, np.rint(1.0 / finest).astype(int)
 
     @classmethod
     def geometry_from_mesh(cls, mesh):
@@ -453,19 +206,6 @@ class RigidCoupling:
         self.omega.assign(w)
         self.v.assign(v)
 
-    def compute_forces_then_integrate(self, pf, fu, fv, fw, tag, lbf = np.zeros(3), h = h0, integrate = True):
-        self.time += dt
-        self.force.zero_()
-        self.torque.zero_()
-        l, b, f = lbf
-        wp.launch(compute_forces_3d, dim = shape, inputs = [pf, self.x_pair.cur, fu, fv, fw, tag, self.force, self.torque, l, b, f, h])
-        wp.launch(integrate_pressure_forces, dim = self.v.shape, inputs = [self.rigid_geometry, self.v, self.omega, self.force, self.torque, integrate])
-
-
-        # override velocity script
-        self.hack_vel()
-        # wp.launch(override, dim = (1), inputs = [self.v, self.omega, velocity, 0])
-
     def reset(self):
         self.time = 0.0
         self.force.zero_()
@@ -487,26 +227,6 @@ class RigidCoupling:
         wp.launch(precompute_solid_vel, dim = vel_rigid.v.f.shape, inputs = [x, v, omega, vel_rigid, vel_owner, 2])
         wp.launch(precompute_solid_vel, dim = vel_rigid.w.f.shape, inputs = [x, v, omega, vel_rigid, vel_owner, 3])
 
-
-    def compute_rigid_phi(self, phi: Field, include_static = 1):
-        x = self.x_pair.cur
-        q =self.theta_pair.cur
-        rigid_geometry = self.rigid_geometry
-
-        wp.launch(compute_rigid_phi, dim = shape, inputs = [x, q, rigid_geometry, phi, include_static])
-
-    def copy_from(self, rc, dt):
-        wp.copy(self.x_pair.cur, rc.x_pair.cur)
-        wp.copy(self.theta_pair.cur, rc.theta_pair.cur)
-        wp.copy(self.rigid_geometry, rc.rigid_geometry)
-        wp.copy(self.v, rc.v)
-        wp.copy(self.omega, rc.omega)
-        self.rigid_step_paired(dt)
-
-    def xform_matrices(self):
-        m = wp.empty(shape = self.v.shape, dtype = wp.mat44)
-        wp.launch(get_xform, dim = self.v.shape, inputs = [self.x_pair.cur, self.theta_pair.cur], outputs = [m])
-        return m.numpy()
 
 
     def set_x0q0v0w0(self, _x0, _q0, _v0, _w0):

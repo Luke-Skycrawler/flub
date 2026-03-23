@@ -460,22 +460,3 @@ class PrecomputeFaceFraction:
         wp.launch(phi_to_fraction, dim = shapeu, inputs = [phi_tmp, frac, 1])
         wp.launch(phi_to_fraction, dim = shapev, inputs = [phi_tmp, frac, 2])
         wp.launch(phi_to_fraction, dim = shapew, inputs = [phi_tmp, frac, 3])
-
-    def precompute_fij_3d_deprecated(self, fuf, fvf, fwf, x, q, geometry, owneru, ownerv, ownerw, x_offset, y_offset, z_offset, h, solid_wall_boundary = True, include_static = 1):
-        '''
-        include static: 0 to only include dynamic objects, 1 for both, 2 for static only
-        if solid_wall_boundary is True, it will detect points at actual coarse grid boundary and set fraction to 0.0
-            not necessary for a patch call, but won't do much damage if it's set True 
-        '''
-        ext_shape = (fuf.shape[0], fvf.shape[1], fwf.shape[2])
-        
-        phi_tmp = wp.empty(ext_shape, dtype = float)
-        wp.launch(precompute_grid_point_phi, dim = ext_shape, inputs = [phi_tmp, x, q, geometry, x_offset, y_offset, z_offset, h, include_static])
-        wp.launch(_precompute_fij_u_3d_cached, dim = fuf.shape, inputs = [phi_tmp, fuf, x, q, geometry, owneru, x_offset, y_offset, z_offset, h, include_static])
-        wp.launch(_precompute_fij_v_3d_cached, dim = fvf.shape, inputs = [phi_tmp, fvf, x, q, geometry, ownerv, x_offset, y_offset, z_offset, h, include_static])
-        wp.launch(_precompute_fij_w_3d_cached, dim = fwf.shape, inputs = [phi_tmp, fwf, x, q, geometry, ownerw, x_offset, y_offset, z_offset, h, include_static])
-        # wp.launch(_precompute_fij_u_3d, dim = fuf.shape, inputs = [fuf, x, q, geometry, owneru, x_offset, y_offset, z_offset, h, include_static])
-        # wp.launch(_precompute_fij_v_3d, dim = fvf.shape, inputs = [fvf, x, q, geometry, ownerv, x_offset, y_offset, z_offset, h, include_static])
-        # wp.launch(_precompute_fij_w_3d, dim = fwf.shape, inputs = [fwf, x, q, geometry, ownerw, x_offset, y_offset, z_offset, h, include_static])
-        if solid_wall_boundary:
-            wp.launch(_set_fij_boundary_3d, dim = (1), inputs = [fuf, fvf, fwf, 0.0, x_offset, y_offset, z_offset, h])

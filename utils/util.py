@@ -412,14 +412,6 @@ def fraction_of_fluid(phi1: float, phi2: float):
     return ret
 
 @wp.kernel
-def process_tag(
-    tag: wp.array3d(dtype = int)
-):
-    i, j, k = wp.tid()
-    tag[i, j, k] = wp.where(tag[i, j, k] == 0, 0, 1)
-
-
-@wp.kernel
 def exclude_rigid_phi(
     phi_rigid: Field,
     phi_water: Field

@@ -1,11 +1,10 @@
 from const_param import *
 from example_fluid import Example
 from advect import advect_phi, advect_uv_mc
-from utils.util import center_in_fluid_3d, sample_3d, fraction_of_fluid, scale_by_3d, exclude_rigid_phi, set_unknown_3d, set_unknown
+from utils.util import scale_by_3d, set_unknown, exclude_rigid_phi
 from adjustable import integrate_3d, set_phi_3d
 from extrapolate import extrapolate_by_1
 from particles import ParticleSystem
-from rigid_coupling import RigidCoupling
 import numpy as np
         
 class WaterExample3d(Example):
@@ -13,29 +12,21 @@ class WaterExample3d(Example):
         # solid sdf
 
         # water sdf
-        self.phi0, self.phi1, self.phi_static = (make_field(0) for _ in range(3))
-        
-        # self.phi0 = wp.zeros(shape, dtype=float)
-        # self.phi1 = wp.zeros(shape, dtype=float)
-
-        # self.phi_static = wp.zeros(shape, dtype = float)
-
+        self.phi0, self.phi1 = (make_field(0) for _ in range(2))
         self.vel_p, self.weight = (make_mac_grid() for _ in range(2))
-
         self.pm = ParticleSystem(shape, sparsity=4)
-
         super().__init__()
 
     def reset(self):
         super().reset()
         wl = self.rc.scene.water_level
         wp.launch(set_phi_3d, dim=shape, inputs=[self.phi0, wl])
-
-
-        # FIXME: why not just use precompute_phi_with_cached_levelset
+        wp.copy(self.phi1.f, self.phi0.f)
         rc = self.rc
-        rc.compute_rigid_phi(self.phi_static, include_static= 2)
-        rc.compute_rigid_phi(self.phi_rigid)
+
+        self.pff.precompute_fij_with_cache(self.frac, self.vel_owner, rc)
+        self.pff.precompute_phi_with_cached_levelset(self.phi_rigid.f, rc, stagger = wp.vec3(0.5, 0.5, 0.5))
+        rc = self.rc
         wp.launch(exclude_rigid_phi, dim = shape, inputs = [self.phi_rigid, self.phi0])
 
         self.pm.initialize_particles(self.phi0, self.vel0)
@@ -122,11 +113,12 @@ class WaterExample3d(Example):
     def render(self, iso_value = 0.0):
         v = np.zeros((0, 3), dtype = float)
         f = np.zeros((0, 3), dtype = int)
-        particles = self.pm.x.numpy()[:self.pm.activated_int] * res
+        # particles = self.pm.x.numpy()[:self.pm.activated_int] * res
         
         rnp = self.phi0.f.numpy()
         if np.max(rnp) > iso_value and np.min(rnp) < iso_value:
             self.mc.surface(self.phi0.f, iso_value)
             v = self.mc.verts.numpy().reshape(-1, 3)
             f = self.mc.indices.numpy().reshape(-1, 3)
-        return v, f, particles
+        print(f"# particles = {self.pm.activated_int}")
+        return v, f, None
