@@ -108,6 +108,14 @@ def _smooth_mcadams(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar)
     divd = _divd[i, j, k]
     z[i, j, k] += (r[i, j, k] + neighbor_dot_tag(z, tag, I)) * divd
 
+@wp.func 
+def clamp_dirichlet(zn: float, tag: float) -> float:
+    return wp.where(tag == 0.0, 0.0, zn)
+
+@wp.func 
+def tdn(tag: float, zn: float) -> float:
+    s = wp.where(tag < 2.0, 1., 0.)
+    return s * zn
 
 @wp.kernel
 def _smooth_mcadams_tiled(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = scalar), tag: wp.array3d(dtype = int), _divd: wp.array3d(dtype = scalar)):
@@ -120,10 +128,12 @@ def _smooth_mcadams_tiled(z: wp.array3d(dtype = scalar), r: wp.array3d(dtype = s
             offset = wp.vec3i(i, j, k) * tile_size
             offset[d] += ii
             
-            tag_tile = wp.tile_load(tag, shape = (tile_size, tile_size, tile_size), offset = (offset[0], offset[1], offset[2]), storage = "register", bounds_check=True) & wp.tile_ones(shape = (tile_size, tile_size, tile_size), dtype = int)
-            zn_tile = wp.tile_load(z, shape = (tile_size, tile_size, tile_size), offset = (offset[0], offset[1], offset[2]), storage = "register", bounds_check=False)
+            tag_tile = wp.tile_astype(wp.tile_load(tag, shape = (tile_size, tile_size, tile_size), offset = (offset[0], offset[1], offset[2]), storage = "register", bounds_check=True), float)
+            zn_tile = wp.tile_load(z, shape = (tile_size, tile_size, tile_size), offset = (offset[0], offset[1], offset[2]), storage = "register", bounds_check=True)
             
-            r_tile += wp.tile_astype(tag_tile, float) * (zn_tile - z_tile)
+            zn_tile = wp.tile_map(clamp_dirichlet, zn_tile, tag_tile)
+
+            r_tile += wp.tile_map(tdn, tag_tile, zn_tile - z_tile)
 
     divd_tile = wp.tile_load(_divd, shape = (tile_size, tile_size, tile_size), offset = (i * tile_size, j * tile_size, k * tile_size), storage="register", bounds_check=False)
 
